@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { PanelOptions } from 'types';
+import { buildOrderIndex, sortByOrder } from './groupTraceData';
 
 function wildcardMatch(pattern: string, text: string): boolean {
   const escaped = pattern
@@ -14,18 +15,18 @@ const normalizeDsName = (name: string): string => {
   if (!name) {
     return '';
   }
-
   let s = name.trim();
   const prefixMatch = s.match(/^(C[A-Z]?\d+)/i);
   if (prefixMatch) {
     s = s.slice(prefixMatch[0].length).trim();
   }
-
   return s.replace(/\s+/g, ' ');
 };
 
 export const useNotificationData = (dsMap: Map<string, Set<string>>, options: PanelOptions['notifyTooltip']) => {
-  const { show: enable, excludeFilter } = options;
+  const { show: enable, excludeFilter, impactJson } = options;
+
+  const orderIndex = useMemo(() => buildOrderIndex(impactJson), [impactJson]);
 
   const filteredNames = useMemo(() => {
     if (!enable || !dsMap.size) {
@@ -39,27 +40,25 @@ export const useNotificationData = (dsMap: Map<string, Set<string>>, options: Pa
           .filter(Boolean)
       : [];
 
-    const result: string[] = [];
+    const pairs: Array<{ original: string; normalized: string }> = [];
 
     for (const [originalDsName, refIds] of dsMap) {
-      const dsName = normalizeDsName(originalDsName);
-
-      if (patterns.length === 0) {
-        result.push(dsName);
-        continue;
+      if (patterns.length > 0) {
+        const allExcluded = Array.from(refIds).every((refId) =>
+          patterns.some((pattern) => wildcardMatch(pattern, refId))
+        );
+        if (allExcluded) {
+          continue;
+        }
       }
 
-      const allExcluded = Array.from(refIds).every((refId) =>
-        patterns.some((pattern) => wildcardMatch(pattern, refId))
-      );
-
-      if (!allExcluded) {
-        result.push(dsName);
-      }
+      pairs.push({ original: originalDsName, normalized: normalizeDsName(originalDsName) });
     }
 
-    return result;
-  }, [dsMap, enable, excludeFilter]);
+    const sortedPairs = sortByOrder(pairs, orderIndex, (p) => [p.original, p.normalized]);
+
+    return sortedPairs.map((p) => p.normalized);
+  }, [dsMap, enable, excludeFilter, orderIndex]);
 
   const count = filteredNames.length;
 

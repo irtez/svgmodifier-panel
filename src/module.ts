@@ -247,6 +247,18 @@ export const plugin = new PanelPlugin<PanelOptions>(SvgPanel)
           placeholder: 'A,B,C,D',
         },
         showIf: (config) => config.notifyTooltip.show,
+      })
+      .addTextInput({
+        category: ['Notify tooltip'],
+        path: 'notifyTooltip.impactJson',
+        name: 'Order JSON',
+        defaultValue: '',
+        settings: {
+          useTextarea: true,
+          rows: 8,
+          placeholder: '[{"trace_id":"1","data":["..."]}]',
+        },
+        showIf: (config) => config.notifyTooltip.show,
       });
   })
   .useFieldConfig({

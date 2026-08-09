@@ -52,6 +52,7 @@ export interface NotifyTooltip {
   threshold?: number;
   hideInEditMode: boolean;
   excludeFilter?: string;
+  impactJson?: string;
 }
 
 export interface PanelOptions {
