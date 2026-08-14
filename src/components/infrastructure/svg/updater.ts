@@ -5,9 +5,7 @@ export function initSVG(svg: string, svgAspectRatio?: string): Document | null {
     return null;
   }
 
-  const cleanSVG = svg
-    .replace(/\s+content="[^"]*"/g, '') // 1. Убираем content="..."
-    .replace(/(<\/svg>)[\s\S]*/i, '$1'); // 2. Убираем всё после </svg>
+  const cleanSVG = svg.replace(/\s+content="[^"]*"/g, '').replace(/(<\/svg>)[\s\S]*/i, '$1');
 
   const doc = new DOMParser().parseFromString(cleanSVG, 'image/svg+xml');
   const svgDoc = doc.documentElement;
@@ -27,29 +25,108 @@ export function svgToString(svg: Document): string {
   return serializer.serializeToString(svg);
 }
 
-export async function updateSvg(operations: Array<() => void>): Promise<void> {
-  const svgElement = document.querySelector('svg');
-
-  if (!svgElement) {
+export function updateSvg(operations: Array<() => void>, svgRoot: SVGElement | null | undefined): void {
+  if (!svgRoot) {
     operations.forEach((op) => op());
     return;
   }
 
-  const originalStyle = svgElement.getAttribute('style') || '';
-
-  svgElement.setAttribute('style', `${originalStyle}; transition: none !important; animation: none !important;`);
+  const originalStyle = svgRoot.getAttribute('style') || '';
+  svgRoot.setAttribute('style', `${originalStyle}; transition: none !important; animation: none !important;`);
 
   try {
     operations.forEach((op) => op());
   } finally {
     if (originalStyle) {
-      svgElement.setAttribute('style', originalStyle);
+      svgRoot.setAttribute('style', originalStyle);
     } else {
-      svgElement.removeAttribute('style');
+      svgRoot.removeAttribute('style');
     }
   }
 }
 
+export interface SvgUpdateTargets {
+  /** Элементы, которым может назначаться fill/stroke/opacity (без вложенного текста и не foreignObject) */
+  colorableElements: SVGElement[];
+  /** Текстовые узлы (SVG или HTML), которым может назначаться цвет текста и содержимое */
+  textElements: Array<SVGTextElement | HTMLElement>;
+}
+
+/**
+ * НОВОЕ: один обход поддерева, который ЗАПОМИНАЕТ, какие узлы вообще могут
+ * быть целью обновления (по структуре DOM — это не меняется между
+ * обновлениями данных, только при смене самого SVG-кода).
+ *
+ * КЛЮЧЕВОЙ ФИКС: раньше eligibility-проверка "нет ли текста внутри" делалась
+ * через `element.querySelector('text')` НА КАЖДЫЙ элемент при КАЖДОМ вызове
+ * updateSvgElementRecursive — а querySelector сам обходит всё поддерево этого
+ * элемента. Для дерева из N узлов с вложенными группами это давало не O(N), а
+ * O(N * средний_размер_поддерева) — то есть реально близко к квадратичному
+ * росту на сложных схемах. Здесь этот обход выполняется РОВНО ОДИН РАЗ на
+ * весь узел (см. collectSvgUpdateTargets), результат кэшируется в DataMap
+ * (см. configSetup.ts), и дальше используется просто как готовый список.
+ */
+export function collectSvgUpdateTargets(root: Element): SvgUpdateTargets {
+  const colorableElements: SVGElement[] = [];
+  const textElements: Array<SVGTextElement | HTMLElement> = [];
+
+  const walk = (element: Element) => {
+    if (element instanceof SVGElement) {
+      if (element.tagName !== 'foreignObject' && !element.querySelector('text')) {
+        colorableElements.push(element);
+      }
+    }
+
+    if (element instanceof SVGTextElement || element instanceof HTMLElement) {
+      textElements.push(element);
+    }
+
+    for (const child of element.children) {
+      walk(child);
+    }
+  };
+
+  walk(root);
+  return { colorableElements, textElements };
+}
+
+/**
+ * Применяет обновления к уже собранному (закэшированному) списку целевых
+ * узлов — без повторного обхода дерева и без querySelector.
+ */
+export function applySvgUpdateTargets(
+  targets: SvgUpdateTargets,
+  label: [boolean, string | undefined],
+  labelColor: [boolean, string | undefined],
+  elColor?: ReturnType<typeof getElementColor>
+): void {
+  if (elColor) {
+    for (const el of targets.colorableElements) {
+      applyColorToElement(el, elColor);
+    }
+  }
+
+  const [hasLabelColor, color] = labelColor;
+  const [hasLabel, text] = label;
+
+  if (!hasLabelColor && !hasLabel) {
+    return;
+  }
+
+  for (const el of targets.textElements) {
+    if (hasLabelColor) {
+      applyColorToText(el, color);
+    }
+    if (hasLabel) {
+      applyTextForTextElement(el, text);
+    }
+  }
+}
+
+/**
+ * Оставлена для обратной совместимости (fallback, если по какой-то причине
+ * кэш целевых узлов недоступен — см. operations.ts). Логика не менялась.
+ */
 export function updateSvgElementRecursive(
   element: Element,
   label: [boolean, string | undefined],

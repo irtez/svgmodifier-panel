@@ -6,27 +6,22 @@ export function queriesFilter(
   index: number,
   elemsLength: number,
   autoConfig?: boolean
-) {
+): QueriesArray {
   const fieldsLength = queries.fields?.length || 0;
-  const tablesLenght = queries.tables?.length || 0;
-  const metricsLength = fieldsLength + tablesLenght;
+  const tablesLength = queries.tables?.length || 0;
+  const metricsLength = fieldsLength + tablesLength;
 
   if (metricsLength === 0) {
-    return;
+    return queries;
   }
 
   if (selector && selector.length > 0) {
     const selectorSet = new Set(selector);
 
-    if (queries.fields) {
-      queries.fields = queries.fields.filter((item) => selectorSet.has(item.counter));
-    }
-
-    if (queries.tables) {
-      queries.tables = queries.tables.filter((item) => selectorSet.has(item.counter));
-    }
-
-    return;
+    return {
+      fields: queries.fields?.filter((item) => selectorSet.has(item.counter)),
+      tables: queries.tables?.filter((item) => selectorSet.has(item.counter)),
+    };
   }
 
   if (autoConfig === true) {
@@ -49,13 +44,11 @@ export function queriesFilter(
       }
     }
 
-    if (queries.fields) {
-      queries.fields = queries.fields.filter((_, idx) => keepCounters.has(idx + 1));
-    }
-    if (queries.tables) {
-      queries.tables = queries.tables.filter((_, idx) => keepCounters.has(idx + 1));
-    }
-
-    return;
+    return {
+      fields: queries.fields?.filter((_, idx) => keepCounters.has(idx + 1)),
+      tables: queries.tables?.filter((_, idx) => keepCounters.has(idx + 1)),
+    };
   }
+
+  return queries;
 }

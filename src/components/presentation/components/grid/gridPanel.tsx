@@ -2,8 +2,8 @@ import React, { useRef } from 'react';
 import { MetricsGrid } from './MetricsGrid';
 import { usePanelContext } from 'components/application/context/panelContext';
 import { useGridPanel } from './hooks/useGridPanel';
-import { NotificationTooltip } from 'components/presentation/tooltips/notifyTooltip/tooltip';
-import { useNotificationData } from 'components/presentation/tooltips/notifyTooltip/useNotificationData';
+import { EMPTY_DS_MAP } from 'shared/constants';
+import { NotificationTooltip, useNotificationData } from 'components/presentation/tooltips/notifyTooltip';
 
 interface GridPanelProps {
   height: number;
@@ -22,12 +22,16 @@ export const GridPanel: React.FC<GridPanelProps> = ({ height, width }) => {
     stretch = true,
     sortByFiring = false,
     emptyPlaceholder,
+    grayBackground = false,
+    showRedZoneTitle = false,
+    redZoneTitle = 'В красной зоне',
+    showBorder = true,
   } = gridOptions;
 
   const gridContent = useGridPanel(processedData, showOnlyFiring, sortByFiring);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const notificationData = useNotificationData(processedData?.dataSourceMap || new Map(), options.notifyTooltip);
+  const notificationData = useNotificationData(processedData?.dataSourceMap ?? EMPTY_DS_MAP, options.notifyTooltip);
 
   return (
     <div ref={containerRef} style={{ height, width, overflow: 'hidden', position: 'relative' }}>
@@ -38,6 +42,10 @@ export const GridPanel: React.FC<GridPanelProps> = ({ height, width }) => {
         showOnlyFiring={showOnlyFiring}
         stretch={stretch}
         emptyPlaceholder={emptyPlaceholder}
+        grayBackground={grayBackground}
+        showRedZoneTitle={showRedZoneTitle}
+        redZoneTitle={redZoneTitle}
+        showBorder={showBorder}
       />
 
       {notificationData.show && (

@@ -1,24 +1,12 @@
 import { useEffect, useRef } from 'react';
-import { TOOLTIP_Z_INDEX } from './constants';
+import {
+  AUTO_SCROLL_START_DELAY_MS,
+  AUTO_SCROLL_DOWN_DURATION_MS,
+  AUTO_SCROLL_PAUSE_AT_BOTTOM_MS,
+  AUTO_SCROLL_UP_DURATION_MS,
+} from '../constants';
 
-// Хук для создания портала
-export const usePortal = (zIndex: number = TOOLTIP_Z_INDEX) => {
-  const portalRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    const el = document.createElement('div');
-    el.setAttribute('data-testid', 'notify-tooltip-portal');
-    el.style.cssText = `position:fixed;top:0;left:0;width:0;height:0;z-index:${zIndex};`;
-    portalRef.current = el;
-    document.body.appendChild(el);
-    return () => {
-      portalRef.current?.remove();
-      portalRef.current = null;
-    };
-  }, [zIndex]);
-  return portalRef;
-};
-
-// Утилита плавного скролла с поддержкой отмены
+/** Плавный скролл к target с поддержкой отмены через cancelRef */
 function smoothScrollTo(
   element: HTMLElement,
   target: number,
@@ -28,11 +16,14 @@ function smoothScrollTo(
   return new Promise((resolve, reject) => {
     const start = element.scrollTop;
     const change = target - start;
+
     if (Math.abs(change) < 0.5) {
       resolve();
       return;
     }
+
     const startTime = performance.now();
+
     const step = (now: number) => {
       if (cancelRef.current) {
         reject(new Error('cancelled'));
@@ -42,23 +33,27 @@ function smoothScrollTo(
       const progress = Math.min(1, elapsed / duration);
       const ease = progress < 0.5 ? 2 * progress * progress : 1 - Math.pow(-2 * progress + 2, 2) / 2;
       element.scrollTop = start + change * ease;
+
       if (progress < 1) {
         requestAnimationFrame(step);
       } else {
         resolve();
       }
     };
+
     requestAnimationFrame(step);
   });
 }
 
-// Хук автоскролла
+/**
+ * Автоскролл длинного списка datasource: пауза → скролл вниз → пауза внизу →
+ * скролл наверх. Полностью отменяется при размонтировании/смене данных.
+ */
 export const useAutoScroll = (
   containerRef: React.RefObject<HTMLDivElement>,
   needsScroll: boolean,
-  dataSourceNames: string[]
-) => {
-  const autoScrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  dataSourceNames: readonly string[]
+): void => {
   const isAutoScrolling = useRef(false);
   const cancelRef = useRef(false);
 
@@ -73,11 +68,6 @@ export const useAutoScroll = (
       return;
     }
 
-    const startDelay = 10000;
-    const scrollDownDuration = 1500;
-    const pauseAtBottom = 5000;
-    const scrollUpDuration = 800;
-
     const timeout = setTimeout(async () => {
       if (cancelRef.current || !containerRef.current || isAutoScrolling.current) {
         return;
@@ -86,25 +76,25 @@ export const useAutoScroll = (
       cancelRef.current = false;
 
       try {
-        await smoothScrollTo(containerRef.current, maxScroll, scrollDownDuration, cancelRef);
+        await smoothScrollTo(containerRef.current, maxScroll, AUTO_SCROLL_DOWN_DURATION_MS, cancelRef);
         if (cancelRef.current) {
           throw new Error('cancelled');
         }
-        await new Promise((resolve) => setTimeout(resolve, pauseAtBottom));
+
+        await new Promise((resolve) => setTimeout(resolve, AUTO_SCROLL_PAUSE_AT_BOTTOM_MS));
         if (cancelRef.current) {
           throw new Error('cancelled');
         }
+
         if (containerRef.current && !cancelRef.current) {
-          await smoothScrollTo(containerRef.current, 0, scrollUpDuration, cancelRef);
+          await smoothScrollTo(containerRef.current, 0, AUTO_SCROLL_UP_DURATION_MS, cancelRef);
         }
       } catch {
-        // игнорируем отмену
+        // Отмена — штатный сценарий (размонтирование/смена данных), молча выходим.
       } finally {
         isAutoScrolling.current = false;
       }
-    }, startDelay);
-
-    autoScrollTimerRef.current = timeout;
+    }, AUTO_SCROLL_START_DELAY_MS);
 
     return () => {
       clearTimeout(timeout);

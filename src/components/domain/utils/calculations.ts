@@ -4,9 +4,6 @@ import { DataFrameMap } from '../models';
 import { matchPattern, roundToFixed } from 'components/domain/utils/common';
 import { CalculationMethod, Metrics, Threshold, ValueMapping, filter } from 'components/domain/models';
 
-/**
- * Сравнивает два числа с помощью оператора
- */
 export function compareValues(a: number, b: number, operator: string): boolean {
   switch (operator) {
     case '<':
@@ -26,9 +23,6 @@ export function compareValues(a: number, b: number, operator: string): boolean {
   }
 }
 
-/**
- *
- */
 export function getMappingMatch(mapping: ValueMapping[], value: number, decimal?: number): string | undefined {
   if (!mapping.length) {
     return undefined;
@@ -62,9 +56,6 @@ export function getMappingMatch(mapping: ValueMapping[], value: number, decimal?
   return undefined;
 }
 
-/**
- *
- */
 export function calculateValue(values: number[], method: CalculationMethod): number {
   if (values.length === 0) {
     return 0;
@@ -97,9 +88,6 @@ export function calculateValue(values: number[], method: CalculationMethod): num
   return result;
 }
 
-/**
- *
- */
 export function getMetricColor(value: number, dataFrame: DataFrameMap, thresholds?: Threshold[], baseColor?: string) {
   let lvl = 0;
   let color = baseColor;
@@ -120,9 +108,6 @@ export function getMetricColor(value: number, dataFrame: DataFrameMap, threshold
   return { color, lvl };
 }
 
-/**
- *
- */
 export function getMath(expression: string, dataFrame: DataFrameMap) {
   const variableRegex =
     /\$([А-Яа-яЁёA-Za-z0-9_]+)(?:\.([А-Яа-яЁёA-Za-z0-9_ -]+))?(?::(last|total|max|min|count|delta))?/g;
@@ -144,7 +129,6 @@ export function getMath(expression: string, dataFrame: DataFrameMap) {
                 value = calculateValue(numericValues, calculationMethod);
               }
             } else {
-              // Если subKey не указан, берем первое значение из метрики
               const firstValue = Array.from(metricData.values.values())[0];
               if (firstValue) {
                 const numericValues: number[] = firstValue.values.map(Number);
@@ -160,9 +144,6 @@ export function getMath(expression: string, dataFrame: DataFrameMap) {
   );
 }
 
-/**
- *
- */
 export function evaluateThresholdCondition(condition: string, dataFrame: DataFrameMap): boolean {
   let result = false;
 
@@ -186,29 +167,33 @@ export function evaluateThresholdCondition(condition: string, dataFrame: DataFra
   return result;
 }
 
-/**
- *
- */
-export async function calculateExpressions(expressions: Expr[], dataFrame: DataFrameMap, timeRange: TimeRange) {
+export async function calculateExpressions(
+  expressions: Expr[],
+  dataFrame: DataFrameMap,
+  timeRange: TimeRange
+): Promise<DataFrameMap> {
   if (!expressions.length || !dataFrame) {
-    return;
+    return dataFrame;
   }
 
+  const enrichedFrame: DataFrameMap = new Map(dataFrame);
   const meticTime = timeRange.to.valueOf();
 
   for (const expr of expressions) {
-    if (!dataFrame.has(expr.refId) && expr.expression && expr.expression.trim() !== '') {
-      const math = getMath(expr.expression, dataFrame);
+    if (!enrichedFrame.has(expr.refId) && expr.expression && expr.expression.trim() !== '') {
+      const math = getMath(expr.expression, enrichedFrame);
       if (math && math.length > 0) {
         try {
           const result = Function('"use strict";return (' + math + ')')();
-          dataFrame.set(expr.refId, {
+          enrichedFrame.set(expr.refId, {
             values: new Map([[expr.refId, { values: [String(result)], timestamps: [meticTime] }]]),
           });
         } catch {}
       }
     }
   }
+
+  return enrichedFrame;
 }
 
 export function checkFilter(text: string, filter: filter | undefined, header?: string): boolean {
@@ -242,18 +227,13 @@ export function checkFilter(text: string, filter: filter | undefined, header?: s
  *  LEGACY-------------------------------------------------
  */
 export function processLegacyMetric(metric: any): Metrics {
-  // Если нет legacy полей, возвращаем как есть
   if (!metric.refIds && !metric.legends) {
     return metric;
   }
 
-  // Создаем копию метрики
   const newMetric = { ...metric };
-
-  // Создаем массив queries из legacy структур
   const queries: any[] = [];
 
-  // Преобразуем refIds
   if (metric.refIds && Array.isArray(metric.refIds)) {
     metric.refIds.forEach((item: any) => {
       if (item && item.refid) {
@@ -262,7 +242,6 @@ export function processLegacyMetric(metric: any): Metrics {
     });
   }
 
-  // Преобразуем legends
   if (metric.legends && Array.isArray(metric.legends)) {
     metric.legends.forEach((item: any) => {
       if (item && item.legend) {
@@ -271,12 +250,10 @@ export function processLegacyMetric(metric: any): Metrics {
     });
   }
 
-  // Заменяем старые поля на queries
   if (queries.length > 0) {
     newMetric.queries = queries;
   }
 
-  // Удаляем старые поля
   delete (newMetric as any).refIds;
   delete (newMetric as any).legends;
 

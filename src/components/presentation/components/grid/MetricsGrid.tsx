@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { useTheme2 } from '@grafana/ui';
 import { GridContent } from 'components/domain/models';
 
@@ -9,7 +9,13 @@ interface MetricsGridProps {
   stretch?: boolean;
   layout?: 'grid' | 'columns';
   emptyPlaceholder?: React.ReactNode;
+  grayBackground?: boolean;
+  showBorder?: boolean;
+  showRedZoneTitle?: boolean;
+  redZoneTitle?: string;
 }
+
+const GRAY_OVERLAY = 'rgba(0, 0, 0, 0.11)';
 
 const scrollbarStyles = (theme: any) => `
   .metrics-container {
@@ -37,6 +43,12 @@ const scrollbarStyles = (theme: any) => `
   }
   .metrics-container::-webkit-scrollbar-thumb:hover {
     background: ${theme.colors.text.secondary};
+  }
+
+  .metrics-red-zone-title {
+    break-inside: avoid;
+    column-span: all;
+    -webkit-column-span: all;
   }
 
   @container metrics (max-width: 600px) {
@@ -92,6 +104,22 @@ const scrollbarStyles = (theme: any) => `
   }
 `;
 
+const hasFiring = (item: GridContent): boolean =>
+  (item.fields?.some((field) => field.lvl > 0) ?? false) ||
+  (item.tables?.some((table) => (table.lvl ?? 0) > 0) ?? false);
+
+/**
+ * Возвращает пару backgroundColor/backgroundImage. Оверлей всегда либо
+ * задан явным градиентом, либо явно 'none' — никогда не оставляем "undefined",
+ * чтобы не было риска унаследовать стиль от предыдущего рендера/другого узла.
+ */
+function getBackgroundStyle(baseColor: string, darken: boolean): { backgroundColor: string; backgroundImage: string } {
+  return {
+    backgroundColor: baseColor,
+    backgroundImage: darken ? `linear-gradient(${GRAY_OVERLAY}, ${GRAY_OVERLAY})` : 'none',
+  };
+}
+
 export const MetricsGrid: React.FC<MetricsGridProps> = ({
   data,
   columns,
@@ -99,8 +127,24 @@ export const MetricsGrid: React.FC<MetricsGridProps> = ({
   stretch = true,
   layout = 'columns',
   emptyPlaceholder,
+  grayBackground = false,
+  showBorder = true,
+  showRedZoneTitle = false,
+  redZoneTitle = 'В красной зоне',
 }) => {
   const theme = useTheme2();
+
+  const { firingItems, normalItems } = useMemo(() => {
+    if (!showRedZoneTitle) {
+      return { firingItems: [] as GridContent[], normalItems: data };
+    }
+    const firing: GridContent[] = [];
+    const normal: GridContent[] = [];
+    for (const item of data) {
+      (hasFiring(item) ? firing : normal).push(item);
+    }
+    return { firingItems: firing, normalItems: normal };
+  }, [data, showRedZoneTitle]);
 
   if (!data.length) {
     const defaultMessage = showOnlyFiring ? 'No firing metrics' : 'No metrics data';
@@ -110,10 +154,9 @@ export const MetricsGrid: React.FC<MetricsGridProps> = ({
   }
 
   const cardBaseStyle = {
-    border: `1px solid ${theme.colors.border.weak}`,
+    border: '1px solid',
     borderRadius: '6px',
     padding: '8px',
-    backgroundColor: theme.colors.background.primary,
     boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
     transition: 'border-color 0.2s',
     display: 'flex',
@@ -124,21 +167,29 @@ export const MetricsGrid: React.FC<MetricsGridProps> = ({
   } as const;
 
   const renderCard = (item: GridContent) => {
-    const cardHasFiring =
-      item.fields?.some((field) => field.lvl > 0) || item.tables?.some((table) => (table.lvl ?? 0) > 0);
-
+    const cardHasFiring = hasFiring(item);
     const primaryColor = item.color || 'transparent';
 
     const visibleFields = showOnlyFiring ? item.fields?.filter((field) => field.lvl > 0) || [] : item.fields || [];
-
     const visibleTables = showOnlyFiring
       ? item.tables?.filter((table) => (table.lvl ?? 0) > 0) || []
       : item.tables || [];
 
+    const backgroundStyle = cardHasFiring
+      ? grayBackground
+        ? getBackgroundStyle(theme.colors.background.secondary, grayBackground || true)
+        : { backgroundColor: `${primaryColor}20`, backgroundImage: 'none' }
+      : getBackgroundStyle(
+          grayBackground ? theme.colors.background.secondary : theme.colors.background.primary,
+          grayBackground
+        );
+
+    const borderColor = !showBorder ? 'transparent' : cardHasFiring ? primaryColor : theme.colors.border.weak;
+
     const cardStyle = {
       ...cardBaseStyle,
-      borderColor: cardHasFiring ? primaryColor : theme.colors.border.weak,
-      backgroundColor: cardHasFiring ? `${primaryColor}20` : theme.colors.background.primary,
+      borderColor,
+      ...backgroundStyle,
     };
 
     return (
@@ -225,7 +276,6 @@ export const MetricsGrid: React.FC<MetricsGridProps> = ({
           </div>
         ))}
 
-        {/* 2. Внутри карточки, если после фильтрации ничего не осталось */}
         {visibleFields.length === 0 && visibleTables.length === 0 && (
           <div style={{ fontSize: '12px', color: theme.colors.text.secondary, fontStyle: 'italic' }}>
             {emptyPlaceholder ?? 'No firing metrics'}
@@ -234,6 +284,23 @@ export const MetricsGrid: React.FC<MetricsGridProps> = ({
       </div>
     );
   };
+
+  const renderRedZoneTitle = (spanAllColumns: boolean) => (
+    <div
+      className={spanAllColumns ? 'metrics-red-zone-title' : undefined}
+      style={{
+        gridColumn: !spanAllColumns ? '1 / -1' : undefined,
+        fontWeight: 'bold',
+        color: theme.colors.text.primary,
+        padding: '4px 2px',
+        marginBottom: '4px',
+      }}
+    >
+      {redZoneTitle}
+    </div>
+  );
+
+  const shouldShowRedZoneTitle = showRedZoneTitle && firingItems.length > 0;
 
   if (layout === 'columns') {
     const columnCount = typeof columns === 'number' ? Math.min(columns, 12) : undefined;
@@ -261,7 +328,9 @@ export const MetricsGrid: React.FC<MetricsGridProps> = ({
               overflow: 'visible',
             }}
           >
-            {data.map((item) => renderCard(item))}
+            {shouldShowRedZoneTitle && renderRedZoneTitle(true)}
+            {firingItems.map((item) => renderCard(item))}
+            {normalItems.map((item) => renderCard(item))}
           </div>
         </div>
       </>
@@ -294,7 +363,9 @@ export const MetricsGrid: React.FC<MetricsGridProps> = ({
           alignItems: stretch ? 'stretch' : 'start',
         }}
       >
-        {data.map((item) => renderCard(item))}
+        {shouldShowRedZoneTitle && renderRedZoneTitle(false)}
+        {firingItems.map((item) => renderCard(item))}
+        {normalItems.map((item) => renderCard(item))}
       </div>
     </>
   );

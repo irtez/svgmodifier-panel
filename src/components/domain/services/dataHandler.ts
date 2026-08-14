@@ -1,13 +1,7 @@
 import { matchPattern } from '../utils/common';
 import { defaultConfig, getConfig } from 'components/infrastructure/config/configBuilder';
 import { formatValues } from '../utils/valueTransformer';
-import {
-  processLegacyMetric,
-  getMappingMatch,
-  calculateValue,
-  getMetricColor,
-  checkFilter,
-} from 'components/domain/utils/calculations';
+import { getMappingMatch, calculateValue, getMetricColor, checkFilter } from 'components/domain/utils/calculations';
 import {
   QuerySpecificSettings,
   Metrics,
@@ -35,9 +29,7 @@ export function getMetricsData(metrics: Metrics[], data: DataFrameMap, mapping?:
 
   let counter = 1;
   for (const metric of metrics) {
-    const processedMetric = processLegacyMetric(metric);
-
-    processedMetric.queries?.forEach((query) => {
+    metric.queries?.forEach((query) => {
       const config = getConfig(query, metric, mapping);
       getQueriesFromDataFrame(query, queriesArray, data, config, counter++);
     });

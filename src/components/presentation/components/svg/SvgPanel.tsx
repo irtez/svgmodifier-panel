@@ -1,9 +1,9 @@
 import React, { useRef } from 'react';
 import { Tooltip } from 'components/presentation/tooltips/svgTooltip/tooltip';
-import { NotificationTooltip } from 'components/presentation/tooltips/notifyTooltip/tooltip';
-import { useNotificationData } from 'components/presentation/tooltips/notifyTooltip/useNotificationData';
+import { NotificationTooltip, useNotificationData } from 'components/presentation/tooltips/notifyTooltip';
 import { usePanelContext } from 'components/application/context/panelContext';
-import { useSvgPanel } from './hooks/useSvgPanel';
+import { useSvgMount, useSvgUpdates } from './hooks/useSvgPanel';
+import { EMPTY_DS_MAP } from 'shared/constants';
 
 interface SvgModePanelProps {
   height: number;
@@ -14,12 +14,16 @@ export const SvgModePanel: React.FC<SvgModePanelProps> = ({ height, width }) => 
   const { processedData, svgDoc, options, timeRange } = usePanelContext();
 
   const containerRef = useRef<HTMLDivElement>(null);
-  const svgString = useSvgPanel(processedData, svgDoc);
-  const notificationData = useNotificationData(processedData?.dataSourceMap || new Map(), options.notifyTooltip);
+  const svgContainerRef = useRef<HTMLDivElement>(null);
+
+  const mountedRootRef = useSvgMount(svgContainerRef, svgDoc);
+  useSvgUpdates(processedData, mountedRootRef);
+
+  const notificationData = useNotificationData(processedData?.dataSourceMap ?? EMPTY_DS_MAP, options.notifyTooltip);
 
   return (
     <div ref={containerRef} style={{ position: 'relative', height, width, overflow: 'hidden' }}>
-      <div dangerouslySetInnerHTML={{ __html: svgString }} style={{ display: 'block', height, width }} />
+      <div ref={svgContainerRef} style={{ display: 'block', height, width }} />
 
       <Tooltip
         containerRef={containerRef}

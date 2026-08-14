@@ -1,21 +1,27 @@
-/**
- * Назначение: JSON задаёт ПОРЯДОК для уже отображаемых datasource-имён в notifyTooltip.
- *
- * Сопоставление имён — двухуровневое, и keyFn может вернуть НЕСКОЛЬКО кандидатов
- * (например, имя с префиксом и без) — они проверяются по очереди:
- *  1) точное совпадение (trim + lowercase) — быстрый путь;
- *  2) если точного совпадения нет ни для одного кандидата — строки из JSON
- *     трактуются как regex-паттерны (case-insensitive) и матчатся против каждого
- *     кандидата. Невалидные как regex строки просто пропускаются.
- *
- * Защита от невалидных данных: при любой ошибке парсинга/формата функции возвращают
- * пустой результат. sortByOrder при пустом индексе отдаёт исходный массив без
- * изменений — тултип показывает список как есть, без сортировки и без падений.
- *
- * Поддерживает два формата входа:
- *  1) "сырой" — объект, где каждый ключ — массив { trace_id, name, children_call? };
- *  2) уже сгруппированный — массив [{ trace_id, data: string[] }].
- */
+// domain/traceOrder.ts
+//
+// парсинг JSON и сортировка по индексу порядка. Имя файла изменено с
+// "groupTraceData" (называет одну внутреннюю функцию) на "traceOrder"
+// (называет назначение модуля: построение и применение порядка трейсов).
+//
+// Назначение: JSON задаёт ПОРЯДОК для уже отображаемых datasource-имён в notifyTooltip.
+//
+// Сопоставление имён — двухуровневое, и keyFn может вернуть НЕСКОЛЬКО кандидатов
+// (например, имя с префиксом и без) — они проверяются по очереди:
+//  1) точное совпадение (trim + lowercase) — быстрый путь;
+//  2) если точного совпадения нет ни для одного кандидата — строки из JSON
+//     трактуются как regex-паттерны (case-insensitive) и матчатся против каждого
+//     кандидата. Невалидные как regex строки просто пропускаются.
+//
+// Защита от невалидных данных: при любой ошибке парсинга/формата функции возвращают
+// пустой результат. sortByOrder при пустом индексе отдаёт исходный массив без
+// изменений — тултип показывает список как есть, без сортировки и без падений.
+//
+// Поддерживает два формата входа:
+//  1) "сырой" — объект, где каждый ключ — массив { trace_id, name, children_call? };
+//  2) уже сгруппированный — массив [{ trace_id, data: string[] }].
+
+import { logger } from 'shared/logger/logger';
 
 export interface TraceEntry {
   trace_id: string;
@@ -65,7 +71,7 @@ function compileRegex(pattern: string): RegExp | null {
   }
 }
 
-function groupTraceData(raw: RawTraceJson): TraceGroup[] {
+function groupRawTraceData(raw: RawTraceJson): TraceGroup[] {
   const namesByTrace = new Map<string, string[]>();
   const childrenByTrace = new Map<string, string[]>();
   const order: string[] = [];
@@ -130,7 +136,7 @@ function parseTraceGroups(raw?: string): TraceGroup[] {
   try {
     parsed = JSON.parse(raw);
   } catch (err) {
-    console.warn('[groupTraceData] Невалидный JSON, показываю список без сортировки:', err);
+    logger.warn('Невалидный JSON в impactJson, показываю список без сортировки', err, 'data');
     return [];
   }
 
@@ -139,11 +145,11 @@ function parseTraceGroups(raw?: string): TraceGroup[] {
       return normalizeGroupedTraceData(parsed);
     }
     if (isPlainObject(parsed)) {
-      return groupTraceData(parsed);
+      return groupRawTraceData(parsed);
     }
     return [];
   } catch (err) {
-    console.warn('[groupTraceData] Не удалось разобрать структуру JSON, показываю список без сортировки:', err);
+    logger.warn('Не удалось разобрать структуру impactJson, показываю список без сортировки', err, 'data');
     return [];
   }
 }
@@ -181,7 +187,7 @@ export function buildOrderIndex(raw?: string): OrderIndex {
 
     return { exact, patterns };
   } catch (err) {
-    console.warn('[groupTraceData] Ошибка построения индекса порядка, сортировка отключена:', err);
+    logger.warn('Ошибка построения индекса порядка notifyTooltip, сортировка отключена', err, 'data');
     return { exact: new Map(), patterns: [] };
   }
 }
@@ -242,7 +248,42 @@ export function sortByOrder<T>(items: T[], orderIndex: OrderIndex, keyFn: (item:
 
     return [...known.map((k) => k.item), ...unknown];
   } catch (err) {
-    console.warn('[groupTraceData] Ошибка сортировки, показываю список без изменений:', err);
+    logger.warn('Ошибка сортировки notifyTooltip, показываю список без изменений', err, 'data');
     return items;
   }
+}
+
+/** Нормализует имя datasource: убирает префикс вида "C12" / "CA345" и лишние пробелы */
+export function normalizeDsName(name: string): string {
+  if (!name) {
+    return '';
+  }
+  let s = name.trim();
+  const prefixMatch = s.match(/^(C[A-Z]?\d+)/i);
+  if (prefixMatch) {
+    s = s.slice(prefixMatch[0].length).trim();
+  }
+  return s.replace(/\s+/g, ' ');
+}
+
+// --- Кэш скомпилированных wildcard-паттернов для excludeFilter --------------
+// Перенесено сюда из useNotificationData.ts: это тоже чистая доменная логика
+// (сопоставление строк по маске), не связанная с React.
+const wildcardRegexCache = new Map<string, RegExp>();
+
+function getWildcardRegex(pattern: string): RegExp {
+  let regex = wildcardRegexCache.get(pattern);
+  if (!regex) {
+    const escaped = pattern
+      .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+      .replace(/\*/g, '.*')
+      .replace(/\?/g, '.');
+    regex = new RegExp('^' + escaped + '$', 'i');
+    wildcardRegexCache.set(pattern, regex);
+  }
+  return regex;
+}
+
+export function wildcardMatch(pattern: string, text: string): boolean {
+  return getWildcardRegex(pattern).test(text);
 }

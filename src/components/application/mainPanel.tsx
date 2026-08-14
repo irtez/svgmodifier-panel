@@ -10,8 +10,10 @@ const Panel: React.FC<PanelProps<PanelOptions>> = ({ data, timeRange, options, h
 
   return (
     <PanelProvider data={data} timeRange={timeRange} options={options}>
-      {mode === 'svg' && <SvgModePanel height={height} width={width} />}
-      {mode === 'grid' && <GridPanel height={height} width={width} />}
+      <div style={{ position: 'relative', height, width, overflow: 'hidden' }}>
+        {mode === 'svg' && <SvgModePanel height={height} width={width} />}
+        {mode === 'grid' && <GridPanel height={height} width={width} />}
+      </div>
     </PanelProvider>
   );
 };

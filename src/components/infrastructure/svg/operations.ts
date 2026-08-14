@@ -1,6 +1,17 @@
 import { ConfigRules, MetricData, TableMetricData } from 'components/domain/models';
 import { getElementColor, getLabel, getLabelColor } from './helpers';
-import { addLinkToElement, updateSvgElementRecursive } from './updater';
+import { addLinkToElement, collectSvgUpdateTargets, applySvgUpdateTargets, SvgUpdateTargets } from './updater';
+
+const targetsCache = new WeakMap<SVGElement, SvgUpdateTargets>();
+
+function getOrBuildTargets(svgElement: SVGElement): SvgUpdateTargets {
+  let targets = targetsCache.get(svgElement);
+  if (!targets) {
+    targets = collectSvgUpdateTargets(svgElement);
+    targetsCache.set(svgElement, targets);
+  }
+  return targets;
+}
 
 export function createSvgUpdateOperation(
   svgElement: SVGElement,
@@ -17,6 +28,8 @@ export function createSvgUpdateOperation(
     const elementColors = getElementColor(data?.color, data?.filling);
 
     hasLink && addLinkToElement(svgElement, attributes?.link?.toString());
-    updateSvgElementRecursive(svgElement, [hasLabel, label], [hasLabelColor, labelColor], elementColors);
+
+    const targets = getOrBuildTargets(svgElement);
+    applySvgUpdateTargets(targets, [hasLabel, label], [hasLabelColor, labelColor], elementColors);
   };
 }

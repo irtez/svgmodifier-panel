@@ -1,3 +1,5 @@
+import { DebugOptions } from 'shared/debug/debugOptions';
+
 export type displayMode = 'svg' | 'table' | 'grid';
 
 export interface JsonData {
@@ -19,6 +21,10 @@ export interface GridMode {
   layout?: 'grid' | 'columns';
   stretch?: boolean;
   emptyPlaceholder?: string;
+  grayBackground?: boolean;
+  showRedZoneTitle?: boolean;
+  redZoneTitle?: string;
+  showBorder?: boolean;
 }
 
 export interface TableMode {
@@ -63,4 +69,5 @@ export interface PanelOptions {
   transformations: Transformations;
   tooltip: Tooltip;
   notifyTooltip: NotifyTooltip;
+  debug: DebugOptions;
 }

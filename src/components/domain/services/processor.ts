@@ -36,7 +36,7 @@ export function processor(configMap: Map<string, DataMap>, dataFrame: DataFrameM
       continue;
     }
 
-    let bestGloablLvl = Number.NEGATIVE_INFINITY;
+    let bestGlobalLvl = Number.NEGATIVE_INFINITY;
     let bestGlobalMetric = Number.NEGATIVE_INFINITY;
     let bestGlobalAttributes: ConfigRules['attributes'] | undefined;
     let bestGlobalEntry: MetricData | TableMetricData | undefined;
@@ -51,12 +51,12 @@ export function processor(configMap: Map<string, DataMap>, dataFrame: DataFrameM
         continue;
       }
 
-      const queriesArray = getMetricsData(attributes.metrics, dataFrame, attributes.valueMapping);
-      if (!queriesArray) {
+      const rawQueriesArray = getMetricsData(attributes.metrics, dataFrame, attributes.valueMapping);
+      if (!rawQueriesArray) {
         continue;
       }
 
-      queriesFilter(queriesArray, selector, elemIndex, elemsLength, attributes.autoConfig);
+      const queriesArray = queriesFilter(rawQueriesArray, selector, elemIndex, elemsLength, attributes.autoConfig);
 
       const { dsNames, bestLvl, bestMetric, bestAttributes, bestEntry } = findBestQuery(
         id,
@@ -66,8 +66,8 @@ export function processor(configMap: Map<string, DataMap>, dataFrame: DataFrameM
         options.notifySettings
       );
 
-      if (bestLvl > bestGloablLvl || (bestLvl === bestGloablLvl && bestMetric > bestGlobalMetric)) {
-        bestGloablLvl = bestLvl;
+      if (bestLvl > bestGlobalLvl || (bestLvl === bestGlobalLvl && bestMetric > bestGlobalMetric)) {
+        bestGlobalLvl = bestLvl;
         bestGlobalMetric = bestMetric;
         bestGlobalEntry = bestEntry;
         bestGlobalAttributes = bestAttributes;
@@ -83,23 +83,23 @@ export function processor(configMap: Map<string, DataMap>, dataFrame: DataFrameM
       }
 
       if (gridContent) {
-        let item = gridContent.find((x) => x.id === id);
-        if (!item) {
-          item = {
+        let gridItem = gridContent.find((x) => x.id === id);
+        if (!gridItem) {
+          gridItem = {
             id,
             title: attributes.title,
             color: bestGlobalEntry?.color,
             fields: [],
             tables: [],
           };
-          gridContent.push(item);
+          gridContent.push(gridItem);
         }
 
         if (queriesArray.fields) {
-          item.fields.push(...queriesArray.fields);
+          gridItem.fields.push(...queriesArray.fields);
         }
         if (queriesArray.tables) {
-          item.tables.push(...queriesArray.tables);
+          gridItem.tables.push(...queriesArray.tables);
         }
       }
     }

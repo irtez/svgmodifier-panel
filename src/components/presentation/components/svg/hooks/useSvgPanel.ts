@@ -1,37 +1,48 @@
-import { useState, useEffect, useRef } from 'react';
-import { updateSvg, svgToString } from 'components/infrastructure/svg/updater';
+import { useLayoutEffect, useRef } from 'react';
+import { updateSvg } from 'components/infrastructure/svg/updater';
 import { ProcessedData } from 'components/application/hooks/usePanelData';
 
-export const useSvgPanel = (processedData: ProcessedData | null, svgDoc: any) => {
-  const [svgString, setSvgString] = useState('');
-  const isActiveRef = useRef(false);
+export function useSvgMount(
+  containerRef: React.RefObject<HTMLDivElement>,
+  svgDoc: Document | null
+): React.RefObject<SVGElement | null> {
+  const mountedRootRef = useRef<SVGElement | null>(null);
 
-  useEffect(() => {
-    isActiveRef.current = true;
-
-    if (!svgDoc) {
-      setSvgString('');
+  useLayoutEffect(() => {
+    const container = containerRef.current;
+    if (!container) {
       return;
     }
 
-    const update = async () => {
-      try {
-        if (processedData?.operations) {
-          await updateSvg(processedData.operations);
-        }
-        if (isActiveRef.current) {
-          setSvgString(svgToString(svgDoc));
-        }
-      } catch (err) {
-        console.error('Error updating SVG:', err);
-      }
-    };
+    container.innerHTML = '';
+    mountedRootRef.current = null;
 
-    update();
+    if (!svgDoc) {
+      return;
+    }
+
+    const rootEl = svgDoc.documentElement as unknown as SVGElement;
+    container.appendChild(rootEl);
+    mountedRootRef.current = rootEl;
+
     return () => {
-      isActiveRef.current = false;
+      if (rootEl.parentNode === container) {
+        container.removeChild(rootEl);
+      }
+      mountedRootRef.current = null;
     };
-  }, [processedData, svgDoc]);
+  }, [containerRef, svgDoc]);
 
-  return svgString;
-};
+  return mountedRootRef;
+}
+
+export function useSvgUpdates(
+  processedData: ProcessedData | null,
+  mountedRootRef: React.RefObject<SVGElement | null>
+): void {
+  useLayoutEffect(() => {
+    if (processedData?.operations) {
+      updateSvg(processedData.operations, mountedRootRef.current);
+    }
+  }, [processedData, mountedRootRef]);
+}

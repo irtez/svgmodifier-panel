@@ -2,7 +2,8 @@ import { PanelPlugin, FieldConfigProperty } from '@grafana/data';
 import { PanelOptions } from 'types';
 
 import SvgPanel from 'components/application/mainPanel';
-import YamlEditor from 'components/presentation/editors/yamlEditor/yamlEditor';
+import { DEFAULT_DEBUG_OPTIONS } from 'shared/debug/debugOptions';
+import YamlEditor from 'components/presentation/editors/yamlEditor/YamlEditor';
 import { ExpressionsEditor } from 'components/presentation/editors/exprEditor/exprEditor';
 
 export const plugin = new PanelPlugin<PanelOptions>(SvgPanel)
@@ -77,6 +78,33 @@ export const plugin = new PanelPlugin<PanelOptions>(SvgPanel)
           placeholder: 'No firing metrics',
         },
         showIf: (config) => (config.displayMode ?? 'svg') === 'grid',
+      })
+      .addBooleanSwitch({
+        category: ['Grid settings'],
+        path: 'grid.showBorder',
+        name: 'Show card border',
+        defaultValue: true,
+        showIf: (config) => (config.displayMode ?? 'svg') === 'grid',
+      })
+      .addBooleanSwitch({
+        category: ['Grid settings'],
+        path: 'grid.grayBackground',
+        name: 'Gray background for normal cards',
+        defaultValue: false,
+        showIf: (config) => (config.displayMode ?? 'svg') === 'grid',
+      })
+      .addBooleanSwitch({
+        category: ['Grid settings'],
+        path: 'grid.showRedZoneTitle',
+        name: 'Show red zone title',
+        defaultValue: false,
+        showIf: (config) => (config.displayMode ?? 'svg') === 'grid',
+      })
+      .addTextInput({
+        category: ['Grid settings'],
+        path: 'grid.redZoneTitle',
+        name: 'Red zone title text',
+        showIf: (config) => (config.displayMode ?? 'svg') === 'grid' && config.grid.showRedZoneTitle === true,
       })
       .addTextInput({
         category: ['SVG settings'],
@@ -259,6 +287,27 @@ export const plugin = new PanelPlugin<PanelOptions>(SvgPanel)
           placeholder: '[{"trace_id":"1","data":["..."]}]',
         },
         showIf: (config) => config.notifyTooltip.show,
+      })
+      .addBooleanSwitch({
+        category: ['DEBUG'],
+        path: 'debug.loggingEnabled',
+        name: 'Enable logging',
+        defaultValue: DEFAULT_DEBUG_OPTIONS.loggingEnabled,
+      })
+      .addRadio({
+        category: ['DEBUG'],
+        path: 'debug.logLevel',
+        name: 'Log level',
+        settings: {
+          options: [
+            { value: 'error', label: 'Error' },
+            { value: 'warn', label: 'Warn' },
+            { value: 'info', label: 'Info' },
+            { value: 'debug', label: 'Debug' },
+          ],
+        },
+        defaultValue: DEFAULT_DEBUG_OPTIONS.logLevel,
+        showIf: (config) => config.debug.loggingEnabled,
       });
   })
   .useFieldConfig({

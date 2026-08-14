@@ -1,51 +1,45 @@
 import { useMemo } from 'react';
 import { PanelOptions } from 'types';
-import { buildOrderIndex, sortByOrder } from './groupTraceData';
+import { buildOrderIndex, sortByOrder, normalizeDsName, wildcardMatch } from './domain/traceOrder';
+import { EMPTY_STRING_ARRAY } from 'shared/constants';
 
-function wildcardMatch(pattern: string, text: string): boolean {
-  const escaped = pattern
-    .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-    .replace(/\*/g, '.*')
-    .replace(/\?/g, '.');
-  const regex = new RegExp('^' + escaped + '$', 'i');
-  return regex.test(text);
-}
-
-const normalizeDsName = (name: string): string => {
-  if (!name) {
-    return '';
-  }
-  let s = name.trim();
-  const prefixMatch = s.match(/^(C[A-Z]?\d+)/i);
-  if (prefixMatch) {
-    s = s.slice(prefixMatch[0].length).trim();
-  }
-  return s.replace(/\s+/g, ' ');
+const EMPTY_RESULT = {
+  show: false,
+  count: 0,
+  dataSourceNames: EMPTY_STRING_ARRAY as string[],
 };
 
 export const useNotificationData = (dsMap: Map<string, Set<string>>, options: PanelOptions['notifyTooltip']) => {
   const { show: enable, excludeFilter, impactJson } = options;
 
-  const orderIndex = useMemo(() => buildOrderIndex(impactJson), [impactJson]);
+  // impactJson может быть довольно большим (полный список ФП с trace_id) —
+  // не парсим и не компилируем regex, если тултип вообще выключен из Debug-группы.
+  const orderIndex = useMemo(() => (enable ? buildOrderIndex(impactJson) : undefined), [enable, impactJson]);
+
+  // excludeFilter — статичная строка из опций панели, парсим её один раз
+  // на изменение самой строки, а не на каждый пересчёт filteredNames.
+  const excludePatterns = useMemo(
+    () =>
+      excludeFilter
+        ? excludeFilter
+            .split(',')
+            .map((p) => p.trim())
+            .filter(Boolean)
+        : EMPTY_STRING_ARRAY,
+    [excludeFilter]
+  );
 
   const filteredNames = useMemo(() => {
-    if (!enable || !dsMap.size) {
-      return [];
+    if (!enable || !dsMap.size || !orderIndex) {
+      return EMPTY_STRING_ARRAY as string[];
     }
-
-    const patterns = excludeFilter
-      ? excludeFilter
-          .split(',')
-          .map((p) => p.trim())
-          .filter(Boolean)
-      : [];
 
     const pairs: Array<{ original: string; normalized: string }> = [];
 
     for (const [originalDsName, refIds] of dsMap) {
-      if (patterns.length > 0) {
+      if (excludePatterns.length > 0) {
         const allExcluded = Array.from(refIds).every((refId) =>
-          patterns.some((pattern) => wildcardMatch(pattern, refId))
+          excludePatterns.some((pattern) => wildcardMatch(pattern, refId))
         );
         if (allExcluded) {
           continue;
@@ -55,15 +49,24 @@ export const useNotificationData = (dsMap: Map<string, Set<string>>, options: Pa
       pairs.push({ original: originalDsName, normalized: normalizeDsName(originalDsName) });
     }
 
-    const sortedPairs = sortByOrder(pairs, orderIndex, (p) => [p.original, p.normalized]);
+    if (pairs.length === 0) {
+      return EMPTY_STRING_ARRAY as string[];
+    }
 
+    const sortedPairs = sortByOrder(pairs, orderIndex, (p) => [p.original, p.normalized]);
     return sortedPairs.map((p) => p.normalized);
-  }, [dsMap, enable, excludeFilter, orderIndex]);
+  }, [dsMap, enable, excludePatterns, orderIndex]);
+
+  // Стабильный "пустой" результат — та же ссылка, если тултип выключен,
+  // что даёт React.memo(NotificationTooltip) шанс вообще не перерисоваться.
+  if (!enable) {
+    return EMPTY_RESULT;
+  }
 
   const count = filteredNames.length;
 
   return {
-    show: enable && count > 0,
+    show: count > 0,
     count,
     dataSourceNames: filteredNames,
   };

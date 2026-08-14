@@ -1,5 +1,5 @@
 import { GrafanaTheme2 } from '@grafana/data';
-import { MAX_TOOLTIP_WIDTH, INITIAL_TOOLTIP_WIDTH } from './constants';
+import { MAX_TOOLTIP_WIDTH, INITIAL_TOOLTIP_WIDTH, ALERT_BORDER_COLOR, ALERT_SHADOW_COLOR } from './constants';
 
 type Theme = GrafanaTheme2;
 
@@ -8,8 +8,8 @@ export const getContainerStyles = (theme: Theme, tooltipWidth: number): React.CS
   backgroundColor: theme.colors.background.primary,
   padding: '8px 10px',
   borderRadius: '3px',
-  border: '1px solid rgba(255, 0, 0, 0.5)',
-  boxShadow: 'inset 0 0 10px rgba(255, 0, 0, 0.4)',
+  border: `1px solid ${ALERT_BORDER_COLOR}`,
+  boxShadow: `inset 0 0 10px ${ALERT_SHADOW_COLOR}`,
   fontFamily: theme.typography.fontFamily,
   pointerEvents: 'none',
   display: 'flex',

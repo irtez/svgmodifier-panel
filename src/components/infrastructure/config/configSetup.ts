@@ -1,5 +1,6 @@
-import { RegexCheck } from 'components/domain/utils/common';
 import { applySchema, parseFilter } from './parsers';
+import { RegexCheck } from 'components/domain/utils/common';
+import { processLegacyMetric } from 'components/domain/utils/calculations';
 import { ConfigRules, DataMap, QueryType, filter } from 'components/domain/models';
 
 export type ConfigMap = Map<string, DataMap>;
@@ -51,7 +52,8 @@ function prepareConfig(
       }
 
       if (metrics) {
-        configToUse.metrics = Array.isArray(metrics) ? metrics : [metrics];
+        const metricsArray = Array.isArray(metrics) ? metrics : [metrics];
+        configToUse.metrics = metricsArray.map(processLegacyMetric);
       }
 
       if (schema && schema.length > 0) {
