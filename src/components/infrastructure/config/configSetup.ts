@@ -1,39 +1,42 @@
 import { applySchema, parseFilter } from './parsers';
 import { RegexCheck } from 'components/domain/utils/common';
 import { processLegacyMetric } from 'components/domain/utils/calculations';
-import { ConfigRules, DataMap, QueryType, filter } from 'components/domain/models';
+import { ConfigRules, QueryType, RulesByElementId, filter } from 'components/domain/models';
 
-export type ConfigMap = Map<string, DataMap>;
+export interface PreparedPanelConfig {
+  rulesByElementId: RulesByElementId;
+  elementsById: Map<string, SVGElement>;
+}
 
-export function initializeConfig(svg: Document | null, config: ConfigRules[] | null) {
-  const configMap: ConfigMap = new Map();
-  const elementsMap = new Map<string, SVGElement>();
+export function initializeConfig(svg: Document | null, config: ConfigRules[] | null): PreparedPanelConfig {
+  const rulesByElementId: RulesByElementId = new Map();
+  const elementsById = new Map<string, SVGElement>();
 
   const requireElement = svg !== null;
 
   if (svg) {
     const elements = svg.querySelectorAll<SVGElement>('[id^="cell"]');
     for (const el of elements) {
-      el.id && elementsMap.set(el.id, el);
+      el.id && elementsById.set(el.id, el);
     }
   }
 
   if (config) {
-    prepareConfig(config, elementsMap, configMap, requireElement);
+    prepareConfig(config, elementsById, rulesByElementId, requireElement);
   }
 
-  return configMap;
+  return { rulesByElementId, elementsById };
 }
 
 function prepareConfig(
   rules: ConfigRules[],
-  elementsMap: Map<string, SVGElement>,
-  configMap: ConfigMap,
+  elementsById: Map<string, SVGElement>,
+  rulesByElementId: RulesByElementId,
   requireElement: boolean
 ) {
   const getRuleConfig = (rule: ConfigRules) => {
     const config = rule.attributes;
-    const elements = getElementsByIdOrRegex(rule.id, elementsMap, requireElement);
+    const elements = getElementsByIdOrRegex(rule.id, elementsById, requireElement);
 
     let elemsLength = elements.length;
     let currentIndex = 0;
@@ -43,7 +46,7 @@ function prepareConfig(
     }
 
     elements.forEach((el, index) => {
-      const [id, schema, selector, svgElement] = el;
+      const [id, schema, selector] = el;
       let configToUse = { ...config };
       let metrics = configToUse.metrics || undefined;
 
@@ -76,7 +79,7 @@ function prepareConfig(
         }
       }
 
-      const additional = {
+      const preparedRule = {
         attributes: configToUse,
         selector: selector,
         elemIndex: currentIndex,
@@ -87,10 +90,10 @@ function prepareConfig(
         currentIndex++;
       }
 
-      if (configMap.get(id)) {
-        configMap.get(id)?.additional.push(additional);
+      if (rulesByElementId.has(id)) {
+        rulesByElementId.get(id)!.push(preparedRule);
       } else {
-        configMap.set(id, { SVGElem: svgElement || null, additional: [additional] });
+        rulesByElementId.set(id, [preparedRule]);
       }
     });
   };
@@ -108,8 +111,8 @@ function getElementsByIdOrRegex(
   id: string | string[],
   map: Map<string, SVGElement>,
   requireElement: boolean
-): Array<[string, string, number[], SVGElement | undefined]> {
-  const getElement = (currentId: string): Array<[string, string, number[], SVGElement | undefined]> => {
+): Array<[string, string, number[]]> {
+  const getElement = (currentId: string): Array<[string, string, number[]]> => {
     const parsed = idParser(currentId);
     if (!parsed) {
       return [];
@@ -122,19 +125,19 @@ function getElementsByIdOrRegex(
       const element = map.get(checkId);
 
       if (!element) {
-        return requireElement ? [] : [[checkId, schema, selector, undefined]];
+        return requireElement ? [] : [[checkId, schema, selector]];
       }
-      return [[checkId, schema, selector, element]];
+      return [[checkId, schema, selector]];
     }
 
     const regex = new RegExp(checkId);
 
-    const matches: Array<[string, string, number[], SVGElement | undefined]> = Array.from(map.entries())
+    const matches: Array<[string, string, number[]]> = Array.from(map.entries())
       .filter(([key]) => regex.test(key))
-      .map(([key, element]) => [key, schema, selector, element]);
+      .map(([key]) => [key, schema, selector]);
 
     if (matches.length === 0 && !requireElement) {
-      return [[checkId, schema, selector, undefined]];
+      return [[checkId, schema, selector]];
     }
 
     return matches;

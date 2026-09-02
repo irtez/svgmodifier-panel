@@ -63,8 +63,8 @@ export interface SvgUpdateTargets {
  * элемента. Для дерева из N узлов с вложенными группами это давало не O(N), а
  * O(N * средний_размер_поддерева) — то есть реально близко к квадратичному
  * росту на сложных схемах. Здесь этот обход выполняется РОВНО ОДИН РАЗ на
- * весь узел (см. collectSvgUpdateTargets), результат кэшируется в DataMap
- * (см. configSetup.ts), и дальше используется просто как готовый список.
+ * весь узел (см. collectSvgUpdateTargets), а результат кэшируется в WeakMap
+ * низкоуровневого SVG operation adapter.
  */
 export function collectSvgUpdateTargets(root: Element): SvgUpdateTargets {
   const colorableElements: SVGElement[] = [];

@@ -1,4 +1,4 @@
-import { DataMap } from '../models/configModels';
+import { RulesByElementId } from '../models/configModels';
 
 /**
  * Форматирует число с заданным количеством десятичных знаков.
@@ -41,7 +41,7 @@ export function matchPattern(pattern: string, target: string): boolean {
 
 export function cleanupResources(
   elements: Map<string, SVGElement> | undefined,
-  configMap: Map<string, DataMap>,
+  rulesByElementId: RulesByElementId,
   tempDocument?: Document | undefined
 ): void {
   if (elements) {
@@ -58,10 +58,5 @@ export function cleanupResources(
     (tempDocument as any) = null;
   }
 
-  configMap.forEach((item) => {
-    if (item.SVGElem) {
-      item.SVGElem = null;
-    }
-  });
-  configMap.clear();
+  rulesByElementId.clear();
 }

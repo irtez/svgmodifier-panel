@@ -4,12 +4,13 @@ import { PanelOptions } from 'types';
 
 import { initSVG } from 'components/infrastructure/svg/updater';
 import { parseYamlConfig } from 'components/infrastructure/config/parsers';
-import { initializeConfig } from 'components/infrastructure/config/configSetup';
+import { initializeConfig, type PreparedPanelConfig } from 'components/infrastructure/config/configSetup';
 import { calculateExpressions } from 'components/domain/utils/calculations';
 import { getCustomTimeSettings } from 'components/domain/utils/timeSettings';
 import { getDataSourceNames } from 'components/infrastructure/services/dataSourceService';
-import { TooltipContent } from 'components/domain/models';
-import { processor } from 'components/domain/services/processor';
+import { DataFrameMap, GridContent, TooltipContent } from 'components/domain/models';
+import { evaluatePanel } from 'components/domain/services/evaluator';
+import { buildPanelPresentation } from 'components/application/adapters/panelPresentation';
 import { extractFields } from 'components/infrastructure/data/dataExtractor';
 
 import { configureLogger, logger } from 'shared/logger/logger';
@@ -18,11 +19,11 @@ import { AppError, ConfigError } from 'shared/errors/AppError';
 import { EMPTY_DS_MAP } from 'shared/constants';
 
 export interface ProcessedData {
-  queriesData: Map<string, any>;
+  queriesData: DataFrameMap;
   tooltipContent: TooltipContent[];
   dataSourceMap: Map<string, Set<string>>;
-  gridContent: any;
-  operations: any;
+  gridContent: GridContent[] | undefined;
+  operations: Array<() => void> | undefined;
 }
 
 export const usePanelData = (data: PanelData, timeRange: TimeRange, options: PanelOptions) => {
@@ -92,7 +93,7 @@ export const usePanelData = (data: PanelData, timeRange: TimeRange, options: Pan
     }
   }, [mode, svgCode, svgAspectRatio]);
 
-  const configMap = useMemo(() => {
+  const preparedConfig = useMemo<PreparedPanelConfig>(() => {
     try {
       return initializeConfig(svgDoc, mappingArray);
     } catch (err) {
@@ -102,7 +103,7 @@ export const usePanelData = (data: PanelData, timeRange: TimeRange, options: Pan
         })
       );
       logger.debug('initializeConfig threw', err, 'config');
-      return new Map();
+      return { rulesByElementId: new Map(), elementsById: new Map() };
     }
   }, [svgDoc, mappingArray]);
 
@@ -130,12 +131,13 @@ export const usePanelData = (data: PanelData, timeRange: TimeRange, options: Pan
         }
 
         const queriesData = await calculateExpressions(transformationsExpressions, rawQueriesData, timeRange);
-        const result = await processor(configMap, queriesData, calculateOptions);
+        const evaluation = evaluatePanel(preparedConfig.rulesByElementId, queriesData);
+        const result = buildPanelPresentation(evaluation, preparedConfig.elementsById, calculateOptions);
 
         if (result && isActiveRef.current) {
           setProcessedData({
             queriesData,
-            tooltipContent: result.tooltip || [],
+            tooltipContent: result.tooltipContent || [],
             dataSourceMap: result.dataSourceMap || EMPTY_DS_MAP,
             operations: result.operations,
             gridContent: result.gridContent,
@@ -161,13 +163,13 @@ export const usePanelData = (data: PanelData, timeRange: TimeRange, options: Pan
     return () => {
       isActiveRef.current = false;
     };
-  }, [data, timeRange, configMap, customTimeSettings, calculateOptions, notifyShow, transformationsExpressions]);
+  }, [data, timeRange, preparedConfig, customTimeSettings, calculateOptions, notifyShow, transformationsExpressions]);
 
   return {
     processedData,
     isLoading,
     svgDoc,
-    configMap,
+    preparedConfig,
     mappingArray,
   };
 };

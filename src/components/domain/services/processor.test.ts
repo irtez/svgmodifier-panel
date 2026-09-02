@@ -1,5 +1,7 @@
-import { ConfigRules, DataFrameMap, DataMap } from 'components/domain/models';
-import { processor } from './processor';
+import { ConfigRules, DataFrameMap } from 'components/domain/models';
+import type { PreparedPanelConfig } from 'components/infrastructure/config/configSetup';
+import { buildPanelPresentation } from 'components/application/adapters/panelPresentation';
+import { evaluatePanel } from './evaluator';
 
 class SyntheticSVGTextElement extends SVGElement {}
 
@@ -39,28 +41,36 @@ function svgTarget(id: string): { root: SVGElement; shape: SVGElement; text: SVG
   return { root, shape, text };
 }
 
-function configMap(root: SVGElement, attributes: Array<ConfigRules['attributes']>): Map<string, DataMap> {
-  return new Map([
-    [
-      root.id,
-      {
-        SVGElem: root,
-        additional: attributes.map((item) => ({
+function preparedConfig(root: SVGElement, attributes: Array<ConfigRules['attributes']>): PreparedPanelConfig {
+  return {
+    elementsById: new Map([[root.id, root]]),
+    rulesByElementId: new Map([
+      [
+        root.id,
+        attributes.map((item) => ({
           selector: undefined,
           elemIndex: 0,
           elemsLength: 1,
           attributes: item,
         })),
-      },
-    ],
-  ]);
+      ],
+    ]),
+  };
 }
 
-describe('processor current behavior', () => {
+function runPipeline(config: PreparedPanelConfig, data: DataFrameMap, mode: 'svg' | 'grid', notify: boolean) {
+  const evaluation = evaluatePanel(config.rulesByElementId, data);
+  return buildPanelPresentation(evaluation, config.elementsById, {
+    mode,
+    notifySettings: { show: notify, threshold: undefined },
+  });
+}
+
+describe('evaluation and presentation behavior', () => {
   it('uses the first equal field winner for SVG, tooltip, and notify output', () => {
     const { root, shape, text } = svgTarget('cell-a');
     const data = fieldFrame({ 'metric-a': 5, 'metric-b': 5 });
-    const map = configMap(root, [
+    const config = preparedConfig(root, [
       {
         label: 'colon',
         labelColor: 'metric',
@@ -94,10 +104,7 @@ describe('processor current behavior', () => {
       },
     ]);
 
-    const result = processor(map, data, {
-      mode: 'svg',
-      notifySettings: { show: true, threshold: undefined },
-    });
+    const result = runPipeline(config, data, 'svg', true);
 
     expect(result.operations).toHaveLength(1);
     result.operations?.[0]();
@@ -110,7 +117,7 @@ describe('processor current behavior', () => {
     expect(root.parentElement?.tagName.toLowerCase()).toBe('a');
     expect(root.parentElement?.getAttribute('href')).toBe('https://example.test/details');
 
-    expect(result.tooltip).toEqual([
+    expect(result.tooltipContent).toEqual([
       {
         id: 'cell-a',
         queryData: [
@@ -139,7 +146,7 @@ describe('processor current behavior', () => {
         },
       ],
     ]);
-    const map = configMap(root, [
+    const config = preparedConfig(root, [
       {
         tooltip: { show: true },
         metrics: [
@@ -153,14 +160,11 @@ describe('processor current behavior', () => {
       },
     ]);
 
-    const result = processor(map, data, {
-      mode: 'svg',
-      notifySettings: { show: false, threshold: undefined },
-    });
+    const result = runPipeline(config, data, 'svg', false);
 
     result.operations?.[0]();
     expect(shape.getAttribute('fill')).toBe('#ff0000');
-    expect(result.tooltip).toEqual([
+    expect(result.tooltipContent).toEqual([
       {
         id: 'cell-b',
         queryTableData: [
@@ -185,7 +189,7 @@ describe('processor current behavior', () => {
       ['A', { values: new Map([['first', { values: ['1'] }]]) }],
       ['B', { values: new Map([['second', { values: ['9'] }]]) }],
     ]);
-    const map = configMap(root, [
+    const config = preparedConfig(root, [
       {
         title: 'Synthetic cell',
         metrics: [
@@ -206,10 +210,7 @@ describe('processor current behavior', () => {
       },
     ]);
 
-    const result = processor(map, data, {
-      mode: 'grid',
-      notifySettings: { show: false, threshold: undefined },
-    });
+    const result = runPipeline(config, data, 'grid', false);
 
     expect(result.gridContent).toEqual([
       {

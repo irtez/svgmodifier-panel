@@ -105,15 +105,14 @@ export interface TooltipContent {
   textBelow?: string | string[] | undefined;
 }
 
-export interface DataMap {
-  SVGElem: SVGElement | null;
-  additional: Array<{
-    selector: number[] | undefined;
-    elemIndex: number;
-    elemsLength: number;
-    attributes: ConfigRules['attributes'];
-  }>;
+export interface PreparedRule {
+  selector: number[] | undefined;
+  elemIndex: number;
+  elemsLength: number;
+  attributes: ConfigRules['attributes'];
 }
+
+export type RulesByElementId = Map<string, PreparedRule[]>;
 
 export interface MetricData {
   counter: number;

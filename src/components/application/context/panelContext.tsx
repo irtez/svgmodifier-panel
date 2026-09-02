@@ -2,13 +2,14 @@ import React, { createContext, useContext, useMemo } from 'react';
 import { PanelData, TimeRange } from '@grafana/data';
 import { PanelOptions } from 'types';
 import { usePanelData, ProcessedData } from '../hooks/usePanelData';
-import { DataMap } from 'components/domain/models/configModels';
+import { ConfigRules } from 'components/domain/models';
+import type { PreparedPanelConfig } from 'components/infrastructure/config/configSetup';
 
 interface PanelContextType {
   isLoading: boolean;
   svgDoc: Document | null;
-  configMap: Map<string, DataMap> | null;
-  mappingArray: any[] | null;
+  preparedConfig: PreparedPanelConfig;
+  mappingArray: ConfigRules[] | null;
   processedData: ProcessedData | null;
   options: PanelOptions;
   timeRange: TimeRange;
@@ -32,19 +33,19 @@ interface PanelProviderProps {
 }
 
 export const PanelProvider: React.FC<PanelProviderProps> = ({ data, timeRange, options, children }) => {
-  const { processedData, isLoading, svgDoc, configMap, mappingArray } = usePanelData(data, timeRange, options);
+  const { processedData, isLoading, svgDoc, preparedConfig, mappingArray } = usePanelData(data, timeRange, options);
 
   const value = useMemo(
     () => ({
       processedData,
       isLoading,
       svgDoc,
-      configMap,
+      preparedConfig,
       mappingArray,
       options,
       timeRange,
     }),
-    [processedData, isLoading, svgDoc, configMap, mappingArray, options, timeRange]
+    [processedData, isLoading, svgDoc, preparedConfig, mappingArray, options, timeRange]
   );
 
   return <PanelContext.Provider value={value}>{children}</PanelContext.Provider>;
