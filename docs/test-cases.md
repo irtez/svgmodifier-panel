@@ -121,6 +121,7 @@
 | U10 | Позднее правило победило в grid | Grid получает цвет окончательного winner | [panelPresentation.test.ts](../src/components/application/adapters/panelPresentation.test.ts) |
 | U11 | Таблица или diagnostic перед числовым правилом | Числовое правило остаётся видимым в tooltip | [softPresentation.test.ts](../src/components/application/adapters/softPresentation.test.ts) |
 | U12 | Очищается неактивный вложенный SVG ID | Очистка не отменяет текущую окраску родительской группы | [softPresentation.test.ts](../src/components/application/adapters/softPresentation.test.ts) |
+| U13 | Статическое правило и динамическая подпись одного элемента; данные сменились на no-data | Исходный текст восстанавливается, но динамический цвет текста становится серым, а не исходным зелёным | [softPresentation.test.ts](../src/components/application/adapters/softPresentation.test.ts) |
 | U14 | Два SVG-элемента внутри общей исходной ссылки; правило меняет ссылку только первого | Ссылка соседа не меняется; повторное обновление и снятие правила сохраняют исходную ссылку и порядок элементов | [operations.test.ts](../src/components/infrastructure/svg/operations.test.ts) |
 | G01 | Старый запрос завершился после нового | Запоздалый результат отвергается | [usePanelData.test.ts](../src/components/application/hooks/usePanelData.test.ts) |
 | G02 | Успех → loading → ошибка | Старый успех не публикуется как актуальный | [usePanelData.test.ts](../src/components/application/hooks/usePanelData.test.ts) |

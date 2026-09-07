@@ -97,7 +97,7 @@ export function evaluatePanel(
       id,
       rules: evaluatedRules,
       winner,
-      selectedAttributes: selectedAttributes ?? (noData ? noDataAttributes : firstDynamicAttributes),
+      selectedAttributes: noData ? noDataAttributes : selectedAttributes ?? firstDynamicAttributes,
       ...(noData ? { noData: { filling: noDataFilling } } : {}),
     });
   }

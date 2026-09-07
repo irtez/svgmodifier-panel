@@ -11,7 +11,7 @@ function preparedRule(attributes: ConfigRules['attributes']): PreparedRule {
 }
 
 describe('evaluatePanel', () => {
-  it('keeps static selection and represents an empty dynamic rule explicitly', () => {
+  it('[U13] uses the unavailable dynamic rule for no-data styling beside a static rule', () => {
     const staticAttributes: ConfigRules['attributes'] = { title: 'Static cell' };
     const emptyAttributes: ConfigRules['attributes'] = {
       title: 'No matching data',
@@ -46,7 +46,7 @@ describe('evaluatePanel', () => {
             },
           ],
           winner: undefined,
-          selectedAttributes: staticAttributes,
+          selectedAttributes: emptyAttributes,
         },
       ],
     });

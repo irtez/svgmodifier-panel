@@ -308,3 +308,39 @@ it('[U12] очистка неактивного вложенного id не о�
   update('parent', 'orange');
   expect(svg.querySelector('rect')?.getAttribute('fill')).toBe('orange');
 });
+
+it('[U13] static-правило не возвращает зелёный цвет динамического текста при no-data', () => {
+  const svg = initSVG(
+    '<svg xmlns="http://www.w3.org/2000/svg"><g id="cell-a"><foreignObject><div xmlns="http://www.w3.org/1999/xhtml" style="color: green">Caption</div></foreignObject></g></svg>',
+    'disable'
+  )!;
+  const label = svg.querySelector('div') as HTMLElement;
+  const prepared = initializeConfig(
+    svg,
+    parseYamlConfig(`changes:
+  - id: a
+    attributes: {title: Static}
+  - id: a
+    attributes:
+      label: replace
+      labelColor: metric
+      metrics:
+        queries: [{refid: A}]
+        filling: none
+        thresholds: [{value: 80, color: red}]
+`)
+  );
+  const update = (data: DataFrameMap) => {
+    const result = buildPanelPresentation(evaluatePanel(prepared.rulesByElementId, data), prepared.elementsById, {
+      mode: 'svg',
+      notifySettings: { show: false, threshold: undefined },
+    });
+    result.operations!.forEach((operation) => operation());
+  };
+  update(new Map([['A', { values: new Map([['value', { values: ['95'] }]]) }]]));
+  expect(label.textContent).toBe('95');
+  expect(label.style.color).toBe('red');
+  update(new Map());
+  expect(label.textContent).toBe('Caption');
+  expect(label.style.color).toBe('rgb(142, 142, 142)');
+});
