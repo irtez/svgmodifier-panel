@@ -60,6 +60,27 @@ describe('createSvgUpdateOperation transitions', () => {
     expect(originalLink.getAttribute('href')).toBe('https://example.test/original');
   });
 
+  it('U14 scopes a dynamic link to its target when the original anchor is shared', () => {
+    const host = svgElement('svg');
+    const sharedLink = svgElement('a');
+    sharedLink.setAttribute('href', 'https://example.test/original');
+    const target = svgElement('rect');
+    const sibling = svgElement('rect');
+    sharedLink.append(target, sibling);
+    host.append(sharedLink);
+
+    createSvgUpdateOperation(target, { link: 'https://example.test/dynamic' }, metric())();
+    expect(target.closest('a')?.getAttribute('href')).toBe('https://example.test/dynamic');
+    expect(sibling.closest('a')?.getAttribute('href')).toBe('https://example.test/original');
+    createSvgUpdateOperation(target, { link: 'https://example.test/updated' }, metric())();
+    expect(target.closest('a')?.getAttribute('href')).toBe('https://example.test/updated');
+    createSvgUpdateOperation(target)();
+    expect(sharedLink.children).toHaveLength(2);
+    expect(sharedLink.children[0]).toBe(target);
+    expect(sharedLink.children[1]).toBe(sibling);
+    expect(target.closest('a')?.getAttribute('href')).toBe('https://example.test/original');
+  });
+
   it('U09 safely restores prior updates when data or attributes are missing and skips a missing DOM target', () => {
     const host = svgElement('svg');
     const rect = svgElement('rect');

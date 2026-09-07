@@ -320,7 +320,8 @@ function linkElementFor(svgElement: SVGElement): SVGElement | null {
   }
 
   const parent = svgElement.parentElement;
-  return parent instanceof SVGElement && parent.localName === 'a' ? parent : null;
+  // A shared authored anchor also belongs to siblings outside this rule.
+  return parent instanceof SVGElement && parent.localName === 'a' && parent.childElementCount === 1 ? parent : null;
 }
 
 function restoreOriginalLink(svgElement: SVGElement, linkElement: SVGElement): void {
