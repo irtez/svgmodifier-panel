@@ -17,11 +17,10 @@ import {
   ValueMapping,
 } from '../models';
 
-/** Неудачный расчёт сохраняет место для selectors/autoConfig, но не числовой candidate. */
+/** Запись расчёта сохраняет query и диагностику, но без candidate не занимает место в autoConfig. */
 export interface QuerySlot {
   counter: number;
   candidate?: EvaluatedCandidate;
-  kind?: 'field' | 'table';
   diagnostics: Diagnostic[];
   filling?: string;
 }
@@ -61,11 +60,9 @@ export function getMetricsData(
         processQuery(query, settings, data, result, counter, ctx);
       } catch (error) {
         reportCalculationError(ctx, error);
-        const entry = query.refid ? data.get(query.refid) : undefined;
         result.slots!.push({
           counter,
           diagnostics: ctx.diagnostics,
-          kind: entry ? (entry.type === 'table' ? 'table' : 'field') : query.legend ? 'field' : undefined,
           filling: typeof settings.filling === 'string' ? settings.filling : 'none',
         });
       }
@@ -86,7 +83,6 @@ function addCandidate(result: QueriesArray, candidate: EvaluatedCandidate, diagn
   result.slots!.push({
     counter: candidate.counter,
     candidate,
-    kind: 'columnsData' in candidate ? 'table' : 'field',
     diagnostics,
     filling: candidate.filling,
   });
@@ -152,7 +148,7 @@ function processQuery(
     const failures = fields.flatMap((field) => field.diagnostics);
     if (fields.some((field) => field.value === undefined)) {
       // Неполная сумма не выдаётся за полную, остальные запросы продолжают работать.
-      result.slots!.push({ counter, kind: 'field', diagnostics: failures, filling: settings.filling });
+      result.slots!.push({ counter, diagnostics: failures, filling: settings.filling });
       return;
     }
     const total = fields.reduce((sum, field) => sum + field.value!, 0);
@@ -166,7 +162,7 @@ function processQuery(
 
   function addField(field: FieldResult, index: number): void {
     if (field.value === undefined) {
-      result.slots!.push({ counter, kind: 'field', diagnostics: field.diagnostics, filling: settings.filling });
+      result.slots!.push({ counter, diagnostics: field.diagnostics, filling: settings.filling });
       return;
     }
     const ctx = {

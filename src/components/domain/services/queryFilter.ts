@@ -13,12 +13,13 @@ export function queriesFilter(
       slots = slots.filter((slot) => selector.includes(slot.counter));
     } else if (autoConfig) {
       // Сохраняем прежнюю раскладку: fields и tables индексируются отдельно.
-      // Неудачный query занимает место, хотя числового результата у него нет.
+      // Раскладываем только доступные результаты; ошибки не занимают индикатор.
+      slots = slots.filter((slot) => slot.candidate);
       const take = (items: typeof slots) =>
         index === elemsLength - 1 ? items.slice(index) : items.slice(index, index + 1);
       const selected = new Set([
-        ...take(slots.filter((slot) => slot.kind !== 'table')),
-        ...take(slots.filter((slot) => slot.kind !== 'field')),
+        ...take(slots.filter((slot) => slot.candidate && !('columnsData' in slot.candidate))),
+        ...take(slots.filter((slot) => slot.candidate && 'columnsData' in slot.candidate)),
       ]);
       slots = slots.filter((slot) => selected.has(slot));
     }

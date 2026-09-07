@@ -198,7 +198,7 @@ it('[C26] нестроковый filling диагностируется до в�
   expect(svg.querySelector('#cell-b rect')?.getAttribute('fill')).toBe('green');
 });
 
-it('[C25,D13] selectors оставляют причины только у нужных элементов', () => {
+it('[C25] selectors оставляют причины только у нужных элементов', () => {
   const svg = new DOMParser().parseFromString(
     '<svg xmlns="http://www.w3.org/2000/svg"><g id="cell-a"/><g id="cell-b"/></svg>',
     'image/svg+xml'

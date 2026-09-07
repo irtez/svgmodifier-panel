@@ -53,6 +53,16 @@ export function evaluatePanel(
       const ruleContext = { ...context, diagnostics: [] as Diagnostic[], source: rule.source, elementIds: [id] };
       const allCandidates = getMetricsData(attributes.metrics!, data, attributes.valueMapping, ruleContext);
       const candidates = queriesFilter(allCandidates, selector, elemIndex, elemsLength, attributes.autoConfig);
+      const autoDistribution = attributes.autoConfig && !selector?.length;
+      if (autoDistribution) {
+        // У неудачного расчёта есть источник, но нет назначенного значка.
+        // Сохраняем его для общего результата, не смешивая с tooltip соседней метрики.
+        diagnostics.push(
+          ...(allCandidates.slots ?? [])
+            .filter((slot) => !slot.candidate)
+            .flatMap((slot) => slot.diagnostics.map((diagnostic) => ({ ...diagnostic, elementIds: [] })))
+        );
+      }
       const ruleDiagnostics = candidates.slots?.flatMap((slot) => slot.diagnostics) ?? [];
       const unavailableSlot = candidates.slots?.find((slot) => !slot.candidate);
       if (!candidates.slots?.length || unavailableSlot) {
@@ -68,7 +78,11 @@ export function evaluatePanel(
           diagnostic.code === 'QUERY_ERROR' ||
           diagnostic.code === 'CALCULATION_ERROR' ||
           diagnostic.source?.expressionRefId;
-        if (relevantFailure && (!inputRef || ruleDiagnostics.some((item) => item.source?.refId === inputRef))) {
+        if (
+          relevantFailure &&
+          ((!inputRef && !autoDistribution) ||
+            ruleDiagnostics.some((item) => inputRef && item.source?.refId === inputRef))
+        ) {
           ruleDiagnostics.push({ ...diagnostic, elementIds: [id] });
         }
       }

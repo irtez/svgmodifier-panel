@@ -97,12 +97,12 @@ describe('табличные результаты и выбор метрики',
     ).toBe(first);
   });
 
-  it('[D13] пустой первый запрос не сдвигает второй на первый элемент autoConfig', () => {
+  it('[D13] autoConfig пропускает отсутствующий запрос и заполняет первый свободный индикатор', () => {
     const metrics: Metrics[] = [{ queries: [{ refid: 'missing' }, { refid: 'B' }], baseColor: 'green' }];
     const data: DataFrameMap = new Map([['B', { values: new Map([['b', { values: ['7'] }]]) }]]);
     const all = getMetricsData(metrics, data);
-    expect(queriesFilter(all, undefined, 0, 2, true).fields).toHaveLength(0);
-    expect(queriesFilter(all, undefined, 1, 2, true).fields?.[0]).toMatchObject({ metricValue: 7 });
+    expect(queriesFilter(all, undefined, 0, 2, true).fields?.[0]).toMatchObject({ metricValue: 7 });
+    expect(queriesFilter(all, undefined, 1, 2, true).fields).toHaveLength(0);
   });
 
   it('[D07,D08] ошибка одной серии не скрывает исправную красную серию того же запроса', () => {
@@ -224,7 +224,7 @@ describe('табличные результаты и выбор метрики',
     expect(queriesFilter(incomplete, [], 1, 2, true).tables).toHaveLength(0);
   });
 
-  it('[C28] фиксирует ограничение autoConfig при исчезновении целого многорядного запроса', () => {
+  it('[C28] autoConfig уплотняет результаты после исчезновения многорядного запроса', () => {
     const metrics: Metrics[] = [{ queries: [{ refid: 'A' }, { refid: 'B' }] }];
     const data: DataFrameMap = new Map([
       [
@@ -244,8 +244,7 @@ describe('табличные результаты и выбор метрики',
     };
     expect(assignments()).toEqual([['a1'], ['a2'], ['b']]);
     data.delete('A');
-    // Без памяти прежних series неизвестно, сколько мест занимал исчезнувший A.
-    // Это ограничение, не гарантия стабильной привязки при изменении состава рядов.
-    expect(assignments()).toEqual([[], ['b'], []]);
+    // Это свободные места для текущего списка, а не закреплённые за series значки.
+    expect(assignments()).toEqual([['b'], [], []]);
   });
 });

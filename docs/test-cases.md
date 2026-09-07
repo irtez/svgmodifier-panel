@@ -40,8 +40,13 @@
 | C25 | `@1`/`@2` selectors и отсутствующий первый query | Причина отсутствия привязана только к затронутому SVG-элементу | [softPresentation.test.ts](../src/components/application/adapters/softPresentation.test.ts) |
 | C26 | Нестрочный `filling` и соседнее исправное правило | Есть `INVALID_FILLING`; DOM-операции не падают и соседнее оформление применяется | [softPresentation.test.ts](../src/components/application/adapters/softPresentation.test.ts) |
 | C27 | Смешанные fields и tables в `autoConfig` | Сохраняется совместимое раздельное позиционное распределение fields и tables | [dataHandler.test.ts](../src/components/domain/services/dataHandler.test.ts) |
-| C28 | В `autoConfig` полностью исчезает query | См. ограничение ниже: прежние тип и количество рядов не сохраняются, последующие позиции могут сдвинуться | [dataHandler.test.ts](../src/components/domain/services/dataHandler.test.ts) |
+| C28 | В `autoConfig` полностью исчезает многорядный query | Оставшиеся результаты уплотняются с первого индикатора, прежние позиции не резервируются | [dataHandler.test.ts](../src/components/domain/services/dataHandler.test.ts) |
 | C29 | Сломанный XML или корень не является SVG | Документ не передаётся в DOM; `initSVG` возвращает `null`, hook добавляет `INVALID_SVG` | [updater.test.ts](../src/components/infrastructure/svg/updater.test.ts) |
+| C30 | Первый query `autoConfig` отсутствует либо его поле пустое/непригодное; следующие дают 95 и 10 | Результаты занимают первые два индикатора (красный, зелёный), третий серый. Причина отсутствия остаётся общей, не приписывается соседней метрике | [autoConfig.test.ts](../src/components/domain/services/autoConfig.test.ts) |
+| C31 | В `autoConfig` нет доступных результатов, есть ошибки запроса/расчёта | Все индикаторы серые с разрешённым tooltip «Нет данных»; полные причины сохраняются в общей диагностике без выдуманной привязки | [autoConfig.test.ts](../src/components/domain/services/autoConfig.test.ts) |
+| C32 | Число доступно, но условие порога ошибочно | Результат занимает обычное место в `autoConfig`; ошибка условия относится к этому индикатору, а не к соседним | [autoConfig.test.ts](../src/components/domain/services/autoConfig.test.ts) |
+| C33 | Явный `@1` рядом с `autoConfig`, первый query отсутствует | Явно привязанный элемент серый с причиной; остальные индикаторы заполняются доступными результатами по порядку | [autoConfig.test.ts](../src/components/domain/services/autoConfig.test.ts) |
+| C34 | Четыре доступных результата на два индикатора `autoConfig` | Первый получает один результат, последний — остальные три, их общий tooltip и цвет победителя; соседний статический элемент не меняется | [autoConfig.test.ts](../src/components/domain/services/autoConfig.test.ts) |
 
 ## Данные, расчёты и выбор winner
 
@@ -59,7 +64,7 @@
 | D10 | Только статическое правило | Нет искусственного no-data или серого цвета | [softPresentation.test.ts](../src/components/application/adapters/softPresentation.test.ts) |
 | D11 | Число валидно, условие порога ошибочно | Число сохраняется; ошибочный порог не применяется | [calculations.test.ts](../src/components/domain/utils/calculations.test.ts) |
 | D12 | Условие корректно возвращает `false` | Это не ошибка и не no-data | [calculations.test.ts](../src/components/domain/utils/calculations.test.ts) |
-| D13 | Первый slot `autoConfig` не дал метрики, второй дал | Второй slot не сдвигается на первый элемент | [dataHandler.test.ts](../src/components/domain/services/dataHandler.test.ts) |
+| D13 | Первый query `autoConfig` не дал метрики, второй дал | Доступная метрика занимает первый индикатор; пропуск не резервирует место | [dataHandler.test.ts](../src/components/domain/services/dataHandler.test.ts) |
 | D14 | Sum включает пустое поле | Неполная сумма не выдаётся за полную | [dataHandler.test.ts](../src/components/domain/services/dataHandler.test.ts) |
 | D15 | Метрика получает datasource metadata | Имя datasource сохраняется в результате, конфигурация не мутируется | [dataHandler.test.ts](../src/components/domain/services/dataHandler.test.ts) |
 | D16 | Read-only таблица и отсутствующий числовой индикатор в обоих порядках правил | Таблица остаётся читаемой, отсутствие числового winner явно отражено | [softPresentation.test.ts](../src/components/application/adapters/softPresentation.test.ts) |
@@ -127,6 +132,6 @@
 | G02 | Успех → loading → ошибка | Старый успех не публикуется как актуальный | [usePanelData.test.ts](../src/components/application/hooks/usePanelData.test.ts) |
 | G03 | Конфиг/диапазон меняется во время обработки | Публикуется только актуальное обновление | [usePanelData.test.ts](../src/components/application/hooks/usePanelData.test.ts) |
 
-## Известное ограничение C28
+## Распределение autoConfig
 
-`autoConfig` распределяет fields и tables по позициям независимо друг от друга, как и раньше. Если query исчезает целиком, обработка не хранит прежние тип и количество его рядов: последующие назначения могут сдвинуться. Это возможно как для многорядного query, так и для одного поля среди смешанных fields/tables. Если поле остаётся в ответе, но его значения пусты или ошибочны, его место сохраняется. Явные selectors привязываются к текущему порядку query и не являются постоянными идентификаторами series. C28 — тест известного ограничения, а не утверждение, что проблема исправлена. Сохранение распределения между обновлениями требует отдельного решения.
+`autoConfig` — набор заполняемых индикаторов, не постоянная привязка series к SVG ID. Доступные fields и tables распределяются по позициям независимо друг от друга; последний индикатор получает остаток каждого типа. Неудачный расчёт не занимает место, его диагностика сохраняется на уровне панели. Ошибка условия при доступном числе остаётся у назначенного результата. Явные selectors имеют приоритет и выбирают query по его позиции в конфиге. C28/D13 фиксируют намеренное уплотнение, а не ограничение, которое нужно устранять хранением предыдущей раскладки.
