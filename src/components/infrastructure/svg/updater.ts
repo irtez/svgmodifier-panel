@@ -10,6 +10,14 @@ export function initSVG(svg: string, svgAspectRatio?: string): Document | null {
   const doc = new DOMParser().parseFromString(cleanSVG, 'image/svg+xml');
   const svgDoc = doc.documentElement;
 
+  if (
+    svgDoc.localName !== 'svg' ||
+    svgDoc.namespaceURI !== 'http://www.w3.org/2000/svg' ||
+    doc.querySelector('parsererror')
+  ) {
+    return null;
+  }
+
   svgDoc.setAttribute('width', '100%');
   svgDoc.setAttribute('height', '100%');
 
@@ -77,7 +85,7 @@ export function collectSvgUpdateTargets(root: Element): SvgUpdateTargets {
       }
     }
 
-    if (element instanceof SVGTextElement || element instanceof HTMLElement) {
+    if (isSvgTextElement(element) || element instanceof HTMLElement) {
       textElements.push(element);
     }
 
@@ -109,16 +117,16 @@ export function applySvgUpdateTargets(
   const [hasLabelColor, color] = labelColor;
   const [hasLabel, text] = label;
 
-  if (!hasLabelColor && !hasLabel) {
-    return;
-  }
-
   for (const el of targets.textElements) {
     if (hasLabelColor) {
       applyColorToText(el, color);
+    } else {
+      restoreTextColor(el, !elColor);
     }
     if (hasLabel) {
       applyTextForTextElement(el, text);
+    } else {
+      restoreTextForTextElement(el);
     }
   }
 }
@@ -141,12 +149,20 @@ export function updateSvgElementRecursive(
     }
   }
 
-  if (element instanceof SVGTextElement || element instanceof HTMLElement) {
+  if (isSvgTextElement(element) || element instanceof HTMLElement) {
     const [hasLabelColor, color] = labelColor;
-    hasLabelColor && applyColorToText(element, color);
+    if (hasLabelColor) {
+      applyColorToText(element, color);
+    } else {
+      restoreTextColor(element, !elColor);
+    }
 
     const [hasLabel, text] = label;
-    hasLabel && applyTextForTextElement(element, text);
+    if (hasLabel) {
+      applyTextForTextElement(element, text);
+    } else {
+      restoreTextForTextElement(element);
+    }
   }
 
   if (hasChildren) {
@@ -156,103 +172,203 @@ export function updateSvgElementRecursive(
   }
 }
 
-function applyColorToElement(element: SVGElement, [fill, stroke, opacity]: ReturnType<typeof getElementColor>): void {
-  if (!element.hasAttribute('data-original-fill')) {
-    element.setAttribute('data-original-fill', element.getAttribute('fill') || '');
-    element.setAttribute('data-original-stroke', element.getAttribute('stroke') || '');
-    element.setAttribute('data-original-fill-opacity', element.getAttribute('fill-opacity') || 'false');
-  }
+function isSvgTextElement(element: Element): element is SVGTextElement {
+  return typeof SVGTextElement !== 'undefined' && element instanceof SVGTextElement;
+}
 
-  const hasFill = fill && fill !== '';
-  const hasStroke = stroke && stroke !== '';
-  const hasOpacity = opacity && opacity !== '';
+function originalKey(key: string, suffix: string): string {
+  return `data-original-${key}-${suffix}`;
+}
 
-  if (!hasFill && !hasStroke && !hasOpacity) {
-    const origFill = element.getAttribute('data-original-fill');
-    const origStroke = element.getAttribute('data-original-stroke');
-    const origOpacity = element.getAttribute('data-original-fill-opacity');
-
-    origFill && element.setAttribute('fill', origFill);
-    origStroke && element.setAttribute('stroke', origStroke);
-    origOpacity && element.setAttribute('fill-opacity', origOpacity);
+function snapshotPaint(element: SVGElement, key: string, attribute: string, styleProperty: string): void {
+  const presentKey = originalKey(key, 'present');
+  if (element.hasAttribute(presentKey)) {
     return;
   }
 
-  element.removeAttribute('style');
+  const value = element.getAttribute(attribute);
+  element.setAttribute(`data-original-${key}`, value || '');
+  element.setAttribute(presentKey, value === null ? 'false' : 'true');
 
-  hasFill && element.setAttribute('fill', fill);
-  hasStroke && element.setAttribute('stroke', stroke);
-  hasOpacity && element.setAttribute('fill-opacity', opacity);
+  const styleValue = element.style.getPropertyValue(styleProperty);
+  element.setAttribute(originalKey(key, 'style'), styleValue);
+  element.setAttribute(originalKey(key, 'style-present'), styleValue ? 'true' : 'false');
+  element.setAttribute(originalKey(key, 'style-priority'), element.style.getPropertyPriority(styleProperty));
 }
 
-function applyColorToText(element: Element, color: string | undefined) {
-  const handleSvg = (element: SVGTextElement) => {
-    if (!element.hasAttribute('data-original-textColor')) {
-      element.setAttribute('data-original-textColor', element.getAttribute('fill') || '');
+function restorePaint(element: SVGElement, key: string, attribute: string, styleProperty: string): void {
+  const presentKey = originalKey(key, 'present');
+  if (!element.hasAttribute(presentKey)) {
+    return;
+  }
+
+  if (element.getAttribute(presentKey) === 'true') {
+    element.setAttribute(attribute, element.getAttribute(`data-original-${key}`) || '');
+  } else {
+    element.removeAttribute(attribute);
+  }
+
+  if (element.getAttribute(originalKey(key, 'style-present')) === 'true') {
+    element.style.setProperty(
+      styleProperty,
+      element.getAttribute(originalKey(key, 'style')) || '',
+      element.getAttribute(originalKey(key, 'style-priority')) || ''
+    );
+  } else {
+    element.style.removeProperty(styleProperty);
+  }
+}
+
+function applyPaint(
+  element: SVGElement,
+  key: string,
+  attribute: string,
+  styleProperty: string,
+  value: string | null
+): void {
+  if (!value) {
+    restorePaint(element, key, attribute, styleProperty);
+    return;
+  }
+
+  snapshotPaint(element, key, attribute, styleProperty);
+  element.style.removeProperty(styleProperty);
+  element.setAttribute(attribute, value);
+}
+
+function applyColorToElement(element: SVGElement, [fill, stroke, opacity]: ReturnType<typeof getElementColor>): void {
+  applyPaint(element, 'fill', 'fill', 'fill', fill);
+  applyPaint(element, 'stroke', 'stroke', 'stroke', stroke);
+  applyPaint(element, 'fill-opacity', 'fill-opacity', 'fill-opacity', opacity);
+}
+
+function applyColorToText(element: SVGTextElement | HTMLElement, color: string | undefined): void {
+  if (isSvgTextElement(element)) {
+    // SVG text is also a colorable SVG element. Use its one physical fill
+    // snapshot so removing labelColor reveals the current element color,
+    // rather than restoring the color that was dynamic in the prior update.
+    applyPaint(element, 'fill', 'fill', 'fill', color || null);
+    return;
+  }
+
+  if (!element.hasAttribute('data-original-textColor-present')) {
+    element.setAttribute('data-original-textColor', element.style.color || '');
+    element.setAttribute('data-original-textColor-present', element.style.color ? 'true' : 'false');
+    element.setAttribute('data-original-textColor-priority', element.style.getPropertyPriority('color'));
+  }
+  if (color) {
+    element.style.color = color;
+  } else {
+    restoreTextColor(element);
+  }
+}
+
+function restoreTextColor(element: SVGTextElement | HTMLElement, restoreSvgFill = false): void {
+  if (isSvgTextElement(element)) {
+    // With an element color, applyColorToElement has already restored or
+    // applied this update's fill. Direct text-only callers need the same
+    // shared snapshot restored here.
+    if (restoreSvgFill) {
+      restorePaint(element, 'fill', 'fill', 'fill');
     }
-
-    if (!color) {
-      const origFill = element.getAttribute('data-original-textColor');
-      origFill && element.setAttribute('fill', origFill);
-      return;
+    return;
+  } else if (element.hasAttribute('data-original-textColor-present')) {
+    if (element.getAttribute('data-original-textColor-present') === 'true') {
+      element.style.setProperty(
+        'color',
+        element.getAttribute('data-original-textColor') || '',
+        element.getAttribute('data-original-textColor-priority') || ''
+      );
+    } else {
+      element.style.removeProperty('color');
     }
-
-    color && element.setAttribute('fill', color);
-  };
-
-  const handleHtml = (element: HTMLElement) => {
-    if (!element.hasAttribute('data-original-textColor')) {
-      element.setAttribute('data-original-textColor', element.style.color || '');
-    }
-
-    if (!color) {
-      const origFill = element.getAttribute('data-original-textColor');
-      origFill && (element.style.color = origFill);
-      return;
-    }
-
-    color && (element.style.color = color);
-  };
-
-  if (element instanceof SVGTextElement) {
-    handleSvg(element);
-  } else if (element instanceof HTMLElement) {
-    handleHtml(element);
   }
 }
 
 function applyTextForTextElement(element: Element, text: string | undefined) {
-  for (let i = 0; i < element.childNodes.length; i++) {
-    const child = element.childNodes[i];
+  for (const child of element.childNodes) {
     if (child.nodeType === Node.TEXT_NODE) {
       if (!element.hasAttribute('data-original-text')) {
         element.setAttribute('data-original-text', child.textContent || '');
       }
+      child.textContent = text || element.getAttribute('data-original-text') || '';
+      return;
+    }
+  }
+}
 
-      if (!text) {
-        const origText = element.getAttribute('data-original-text');
-        child.textContent = origText;
-        break;
-      }
+function restoreTextForTextElement(element: SVGTextElement | HTMLElement): void {
+  if (!element.hasAttribute('data-original-text')) {
+    return;
+  }
 
-      child.textContent = text;
-      break;
+  for (const child of element.childNodes) {
+    if (child.nodeType === Node.TEXT_NODE) {
+      child.textContent = element.getAttribute('data-original-text') || '';
+      return;
     }
   }
 }
 
 export function addLinkToElement(svgElement: SVGElement, link?: string): void {
-  const parent = svgElement.parentNode;
-  if (!parent || svgElement.hasAttribute('data-has-link') || !link) {
+  updateLinkForElement(svgElement, link);
+}
+
+function linkElementFor(svgElement: SVGElement): SVGElement | null {
+  if (svgElement.localName === 'a') {
+    return svgElement;
+  }
+
+  const parent = svgElement.parentElement;
+  return parent instanceof SVGElement && parent.localName === 'a' ? parent : null;
+}
+
+function restoreOriginalLink(svgElement: SVGElement, linkElement: SVGElement): void {
+  if (!svgElement.hasAttribute('data-original-link-href-present')) {
     return;
   }
 
-  const linkElement = document.createElementNS('http://www.w3.org/2000/svg', 'a');
+  if (svgElement.getAttribute('data-original-link-href-present') === 'true') {
+    linkElement.setAttribute('href', svgElement.getAttribute('data-original-link-href') || '');
+  } else {
+    linkElement.removeAttribute('href');
+  }
+  svgElement.removeAttribute('data-original-link-href');
+  svgElement.removeAttribute('data-original-link-href-present');
+}
 
-  linkElement.setAttribute('target', '_blank');
-  linkElement.setAttribute('href', link);
+export function updateLinkForElement(svgElement: SVGElement, link?: string): void {
+  const existingLink = linkElementFor(svgElement);
 
-  svgElement.setAttribute('data-has-link', 'true');
-  parent.insertBefore(linkElement, svgElement);
-  linkElement.appendChild(svgElement);
+  if (link) {
+    if (existingLink) {
+      if (!svgElement.hasAttribute('data-has-link') && !svgElement.hasAttribute('data-original-link-href-present')) {
+        const originalHref = existingLink.getAttribute('href');
+        svgElement.setAttribute('data-original-link-href', originalHref || '');
+        svgElement.setAttribute('data-original-link-href-present', originalHref === null ? 'false' : 'true');
+      }
+      existingLink.setAttribute('href', link);
+      return;
+    }
+
+    const parent = svgElement.parentNode;
+    if (!parent) {
+      return;
+    }
+    const linkElement = document.createElementNS('http://www.w3.org/2000/svg', 'a');
+    linkElement.setAttribute('target', '_blank');
+    linkElement.setAttribute('href', link);
+    svgElement.setAttribute('data-has-link', 'true');
+    parent.insertBefore(linkElement, svgElement);
+    linkElement.appendChild(svgElement);
+    return;
+  }
+
+  if (svgElement.hasAttribute('data-has-link') && existingLink?.parentNode) {
+    existingLink.parentNode.insertBefore(svgElement, existingLink);
+    existingLink.remove();
+    svgElement.removeAttribute('data-has-link');
+  } else if (existingLink) {
+    restoreOriginalLink(svgElement, existingLink);
+  }
 }
