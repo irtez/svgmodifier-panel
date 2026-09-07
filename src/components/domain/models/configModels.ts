@@ -51,9 +51,10 @@ export interface Metrics extends GeneralMetricSettings {
   queries?: QueryType[];
 }
 
+// Старые YAML могут содержать оба ключа; нужен хотя бы один способ выбора.
 export type QueryType =
-  | ({ legend: string; refid?: never } & QuerySpecificSettings)
-  | ({ refid: string; legend?: never } & QuerySpecificSettings);
+  | ({ legend: string; refid?: string } & QuerySpecificSettings)
+  | ({ refid: string; legend?: string } & QuerySpecificSettings);
 
 export interface GeneralMetricSettings {
   calculation?: CalculationMethod;

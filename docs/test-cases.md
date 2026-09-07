@@ -47,6 +47,11 @@
 | C32 | Число доступно, но условие порога ошибочно | Результат занимает обычное место в `autoConfig`; ошибка условия относится к этому индикатору, а не к соседним | [autoConfig.test.ts](../src/components/domain/services/autoConfig.test.ts) |
 | C33 | Явный `@1` рядом с `autoConfig`, первый query отсутствует | Явно привязанный элемент серый с причиной; остальные индикаторы заполняются доступными результатами по порядку | [autoConfig.test.ts](../src/components/domain/services/autoConfig.test.ts) |
 | C34 | Четыре доступных результата на два индикатора `autoConfig` | Первый получает один результат, последний — остальные три, их общий tooltip и цвет победителя; соседний статический элемент не меняется | [autoConfig.test.ts](../src/components/domain/services/autoConfig.test.ts) |
+| C35 | Один query содержит `refid`, `legend`, `sum`; выборки дают 10+20 и 3+7 | Два результата 30 и 10 с общей подписью sum и номером query, обе строки в tooltip; порог 35 не срабатывает на выдуманную общую сумму 40 | [querySelections.test.ts](../src/components/domain/services/querySelections.test.ts) |
+| C36 | `refid` и `legend` выбирают одни и те же ряды с суммой 30 | Сохраняются две независимые суммы 30 и 30, а не единый результат 60 | [querySelections.test.ts](../src/components/domain/services/querySelections.test.ts) |
+| C37 | `refid` и `legend` записаны в отдельных queries, у каждого свой sum | Сохраняются отдельные суммы, подписи и номера queries | [querySelections.test.ts](../src/components/domain/services/querySelections.test.ts) |
+| C38 | Оба ключа в одном query без sum | Ряды остаются отдельными результатами в прежнем порядке: сначала refid, затем legend | [querySelections.test.ts](../src/components/domain/services/querySelections.test.ts) |
+| C39 | Две суммы одного query используются с selector или autoConfig | Selector выбирает обе суммы по общему номеру query; autoConfig раскладывает их как два доступных результата | [querySelections.test.ts](../src/components/domain/services/querySelections.test.ts) |
 
 ## Данные, расчёты и выбор winner
 
@@ -68,6 +73,10 @@
 | D14 | Sum включает пустое поле | Неполная сумма не выдаётся за полную | [dataHandler.test.ts](../src/components/domain/services/dataHandler.test.ts) |
 | D15 | Метрика получает datasource metadata | Имя datasource сохраняется в результате, конфигурация не мутируется | [dataHandler.test.ts](../src/components/domain/services/dataHandler.test.ts) |
 | D16 | Read-only таблица и отсутствующий числовой индикатор в обоих порядках правил | Таблица остаётся читаемой, отсутствие числового winner явно отражено | [softPresentation.test.ts](../src/components/application/adapters/softPresentation.test.ts) |
+| D17 | В одной из двух выборок query с refid/legend/sum есть пустое поле | Неполная сумма исключается целиком, доступная соседняя сохраняется; источник ошибки указывает конкретные refid и поле | [querySelections.test.ts](../src/components/domain/services/querySelections.test.ts) |
+| D18 | В query с refid/legend/sum отсутствует refid, но есть совпадения legend | Сумма legend сохраняется, отсутствующий refid возвращает MISSING_INPUT вместо нуля | [querySelections.test.ts](../src/components/domain/services/querySelections.test.ts) |
+| D19 | В query с refid/legend/sum нет совпадений legend, но refid доступен | Сумма refid сохраняется; пустая выборка legend возвращает EMPTY_INPUT и не создаёт ноль | [querySelections.test.ts](../src/components/domain/services/querySelections.test.ts) |
+| D20 | Первая из двух сумм переполняет конечное число | Некорректный результат исключается с NON_FINITE_VALUE, вторая сумма остаётся доступной | [querySelections.test.ts](../src/components/domain/services/querySelections.test.ts) |
 
 | ID | Вход | Ожидаемое поведение | Проверка |
 | --- | --- | --- | --- |
@@ -99,6 +108,7 @@
 | E02 | Формула с отсутствующей зависимостью | Причина диагностируется, ноль не подставляется | [calculations.test.ts](../src/components/domain/utils/calculations.test.ts) |
 | E03 | Условие возвращает функцию, строку или число | Возвращается ошибка типа результата | [calculations.test.ts](../src/components/domain/utils/calculations.test.ts) |
 | E04 | Необычное, но корректное сравнение | Вычисляется как написано, намерение не угадывается | [calculations.test.ts](../src/components/domain/utils/calculations.test.ts) |
+| E05 | Две выборки дают 0.004+0.005 и настоящий ноль | Raw-суммы сохраняют 0.009 и 0; округление первой до 0.01 применяется только к display value | [querySelections.test.ts](../src/components/domain/services/querySelections.test.ts) |
 
 ## Время, tooltip, SVG и обновления
 

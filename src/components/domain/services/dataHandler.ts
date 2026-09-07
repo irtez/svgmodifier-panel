@@ -46,28 +46,36 @@ export function getMetricsData(
     for (const query of metric.queries ?? []) {
       counter++;
       const settings = getConfig(query, metric, mapping);
-      const ctx: EvaluationContext = {
-        ...context,
-        diagnostics: [],
-        source: { ...context.source, refId: query.refid, legend: query.legend },
-      };
-      const start = result.slots!.length;
-      try {
-        if (typeof settings.filling !== 'string') {
-          throw new CalculationError('INVALID_FILLING', 'filling должен быть строкой');
+      // Старый YAML допускает оба способа выбора: sum считается для каждого
+      // отдельно. Номер query общий, поэтому явные selectors не меняются.
+      const selections: QueryType[] =
+        settings.sum && query.refid && query.legend
+          ? [{ refid: query.refid }, { legend: query.legend }]
+          : [query];
+      for (const selection of selections) {
+        const ctx: EvaluationContext = {
+          ...context,
+          diagnostics: [],
+          source: { ...context.source, refId: selection.refid, legend: selection.legend },
+        };
+        const start = result.slots!.length;
+        try {
+          if (typeof settings.filling !== 'string') {
+            throw new CalculationError('INVALID_FILLING', 'filling должен быть строкой');
+          }
+          settings.filter = resolveFilterDates(settings.filter, context.timeTo);
+          processQuery(selection, settings, data, result, counter, ctx);
+        } catch (error) {
+          reportCalculationError(ctx, error);
+          result.slots!.push({
+            counter,
+            diagnostics: ctx.diagnostics,
+            filling: typeof settings.filling === 'string' ? settings.filling : 'none',
+          });
         }
-        settings.filter = resolveFilterDates(settings.filter, context.timeTo);
-        processQuery(query, settings, data, result, counter, ctx);
-      } catch (error) {
-        reportCalculationError(ctx, error);
-        result.slots!.push({
-          counter,
-          diagnostics: ctx.diagnostics,
-          filling: typeof settings.filling === 'string' ? settings.filling : 'none',
-        });
-      }
-      for (const slot of result.slots!.slice(start)) {
-        context.diagnostics.push(...slot.diagnostics);
+        for (const slot of result.slots!.slice(start)) {
+          context.diagnostics.push(...slot.diagnostics);
+        }
       }
     }
   }
