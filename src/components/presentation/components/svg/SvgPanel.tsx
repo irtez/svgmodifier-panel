@@ -29,7 +29,7 @@ export const SvgModePanel: React.FC<SvgModePanelProps> = ({ height, width }) => 
         containerRef={containerRef}
         tooltipContent={processedData?.tooltipContent || []}
         options={options.tooltip}
-        timeRange={timeRange}
+        timeRange={processedData?.timeRange ?? timeRange}
       />
 
       {notificationData.show && (

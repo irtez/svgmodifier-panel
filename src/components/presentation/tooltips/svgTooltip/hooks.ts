@@ -31,30 +31,39 @@ export const useTooltipLogic = (
 
   tooltipDataRef.current = tooltipData;
 
-  // Обновление содержимого закреплённых тултипов при изменении данных или опций
+  // Подсказка показывает актуальный результат панели даже без нового движения мыши.
   useEffect(() => {
-    if (!pinnedTooltips.length) {
-      return;
-    }
-
     setPinnedTooltips((prev) =>
-      prev.map((pinned) => {
+      prev.flatMap((pinned) => {
         const freshData = tooltipDataRef.current.find((td) => td.id === pinned.elementId);
         if (!freshData) {
-          return pinned;
+          return [];
         }
         const newContent = processTooltipContent(freshData, options);
         if (!newContent) {
-          return pinned;
+          return [];
         }
         // Сравниваем содержимое (глубокое сравнение – простой JSON.stringify подойдёт)
         if (JSON.stringify(newContent) === JSON.stringify(pinned.content)) {
-          return pinned;
+          return [pinned];
         }
-        return { ...pinned, content: newContent };
+        return [{ ...pinned, content: newContent }];
       })
     );
-  }, [tooltipData, options, pinnedTooltips.length]); // pinnedTooltips.length не меняется часто, но перебираем все
+    setHoverTooltip((previous) => {
+      if (!previous) {
+        return null;
+      }
+      const content = processTooltipContent(
+        tooltipData.find((item) => item.id === previous.id),
+        options
+      );
+      if (!content) {
+        return null;
+      }
+      return JSON.stringify(content) === JSON.stringify(previous.content) ? previous : { ...previous, content };
+    });
+  }, [tooltipData, options]);
 
   const hideHover = useCallback(() => {
     if (!isMounted.current) {

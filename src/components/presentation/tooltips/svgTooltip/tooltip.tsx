@@ -36,8 +36,9 @@ const TooltipContentComponent: React.FC<{
   const tableMetrics = validCheck(content.queryTableData);
   const textAbove = validCheck(content.textAbove);
   const textBelow = validCheck(content.textBelow);
+  const diagnostics = validCheck(content.diagnostics);
 
-  if (!Boolean(metrics || tableMetrics || textAbove || textBelow)) {
+  if (!Boolean(metrics || tableMetrics || textAbove || textBelow || diagnostics || content.noData)) {
     return null;
   }
 
@@ -52,6 +53,17 @@ const TooltipContentComponent: React.FC<{
         {textAbove && <TextSection currentText={textAbove as string[]} />}
         {metrics && <MetricsSection queryData={metrics} options={options} />}
         {tableMetrics && <TableSection tables={tableMetrics} />}
+        {content.noData && <TextSection currentText={['Нет данных для определения состояния']} />}
+        {diagnostics && (
+          <ul style={{ margin: '6px 0', paddingLeft: '20px' }}>
+            {diagnostics.map((diagnostic, index) => (
+              <li key={index}>
+                {diagnostic.source?.legend ? `${diagnostic.source.legend}: ` : ''}
+                {diagnostic.message}
+              </li>
+            ))}
+          </ul>
+        )}
         {textBelow && <TextSection currentText={textBelow as string[]} />}
       </div>
     </div>

@@ -1,24 +1,25 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
-import { PanelData, TimeRange } from '@grafana/data';
+import { LoadingState, PanelData, TimeRange } from '@grafana/data';
 import { PanelOptions } from 'types';
 
 import { initSVG } from 'components/infrastructure/svg/updater';
-import { parseYamlConfig } from 'components/infrastructure/config/parsers';
+import { parsePanelConfig } from 'components/infrastructure/config/parsers';
 import { initializeConfig, type PreparedPanelConfig } from 'components/infrastructure/config/configSetup';
 import { calculateExpressions } from 'components/domain/utils/calculations';
 import { getCustomTimeSettings } from 'components/domain/utils/timeSettings';
 import { getDataSourceNames } from 'components/infrastructure/services/dataSourceService';
-import { DataFrameMap, GridContent, TooltipContent } from 'components/domain/models';
+import { DataFrameMap, Diagnostic, GridContent, PanelEvaluation, TooltipContent } from 'components/domain/models';
 import { evaluatePanel } from 'components/domain/services/evaluator';
 import { buildPanelPresentation } from 'components/application/adapters/panelPresentation';
 import { extractFields } from 'components/infrastructure/data/dataExtractor';
 
 import { configureLogger, logger } from 'shared/logger/logger';
-import { errorStore } from 'shared/errors/errorStore';
-import { AppError, ConfigError } from 'shared/errors/AppError';
 import { EMPTY_DS_MAP } from 'shared/constants';
 
 export interface ProcessedData {
+  generation: number;
+  timeRange: TimeRange;
+  evaluation: PanelEvaluation;
   queriesData: DataFrameMap;
   tooltipContent: TooltipContent[];
   dataSourceMap: Map<string, Set<string>>;
@@ -27,8 +28,7 @@ export interface ProcessedData {
 }
 
 export const usePanelData = (data: PanelData, timeRange: TimeRange, options: PanelOptions) => {
-  const countQueries = useRef(0);
-  const isActiveRef = useRef(false);
+  const generationRef = useRef(0);
 
   const [isLoading, setIsLoading] = useState(false);
   const [processedData, setProcessedData] = useState<ProcessedData | null>(null);
@@ -62,19 +62,8 @@ export const usePanelData = (data: PanelData, timeRange: TimeRange, options: Pan
     [customRelativeTime, fieldsCustomRelativeTime]
   );
 
-  const mappingArray = useMemo(() => {
-    try {
-      return parseYamlConfig(metricsMapping);
-    } catch (err) {
-      errorStore.report(
-        new ConfigError('Не удалось разобрать YAML-конфигурацию панели', {
-          cause: err instanceof Error ? err.message : err,
-        })
-      );
-      logger.debug('parseYamlConfig threw', err, 'config');
-      return null;
-    }
-  }, [metricsMapping]);
+  const parsedConfig = useMemo(() => parsePanelConfig(metricsMapping), [metricsMapping]);
+  const mappingArray = parsedConfig.rules;
 
   const svgDoc = useMemo(() => {
     if (mode !== 'svg' || !svgCode) {
@@ -83,59 +72,105 @@ export const usePanelData = (data: PanelData, timeRange: TimeRange, options: Pan
     try {
       return initSVG(svgCode, svgAspectRatio);
     } catch (err) {
-      errorStore.report(
-        new AppError('svg', 'Не удалось разобрать SVG-код панели', {
-          cause: err instanceof Error ? err.message : err,
-        })
-      );
       logger.debug('initSVG threw', err, 'svg');
       return null;
     }
   }, [mode, svgCode, svgAspectRatio]);
 
   const preparedConfig = useMemo<PreparedPanelConfig>(() => {
-    try {
-      return initializeConfig(svgDoc, mappingArray);
-    } catch (err) {
-      errorStore.report(
-        new ConfigError('Не удалось сопоставить конфигурацию с элементами SVG', {
-          cause: err instanceof Error ? err.message : err,
-        })
-      );
-      logger.debug('initializeConfig threw', err, 'config');
-      return { rulesByElementId: new Map(), elementsById: new Map() };
+    if (mode === 'svg' && !svgDoc) {
+      return {
+        rulesByElementId: new Map(),
+        elementsById: new Map(),
+        diagnostics: [
+          { code: 'INVALID_SVG', severity: 'error', message: 'SVG отсутствует или не может быть разобран' },
+        ],
+      };
     }
-  }, [svgDoc, mappingArray]);
-
-  useEffect(() => {
-    errorStore.clear();
-  }, [svgCode, metricsMapping]);
+    return initializeConfig(svgDoc, mappingArray);
+  }, [mode, svgDoc, mappingArray]);
 
   const transformationsExpressions = options.transformations.expressions;
 
   useEffect(() => {
-    isActiveRef.current = true;
+    const generation = ++generationRef.current;
+    const isCurrent = () => generationRef.current === generation;
     setIsLoading(true);
+    const cleanup = () => {
+      generationRef.current++;
+    };
+
+    // Grafana может передать предыдущие series, пока следующий запрос ещё выполняется.
+    if (data.state === LoadingState.Loading || data.state === LoadingState.NotStarted) {
+      return cleanup;
+    }
 
     const process = async () => {
+      const diagnostics: Diagnostic[] = [...parsedConfig.diagnostics, ...(preparedConfig.diagnostics ?? [])];
+      let queriesData: DataFrameMap = new Map();
       try {
-        const rawQueriesData = await extractFields(data, customTimeSettings, timeRange);
-
-        if (notifyShow && rawQueriesData.size !== countQueries.current) {
-          await getDataSourceNames(data, rawQueriesData);
-          countQueries.current = rawQueriesData.size;
+        const errors = data.errors?.length ? data.errors : data.error ? [data.error] : [];
+        const failedRefs = new Set(errors.map((error) => error.refId).filter(Boolean));
+        const unknownFailure =
+          errors.some((error) => !error.refId) || (data.state === LoadingState.Error && !errors.length);
+        for (const error of errors) {
+          diagnostics.push({
+            code: 'QUERY_ERROR',
+            severity: 'error',
+            message: `Ошибка запроса: ${error.message}`,
+            source: { refId: error.refId },
+          });
         }
-
-        if (!isActiveRef.current) {
+        if (unknownFailure && !errors.length) {
+          diagnostics.push({ code: 'QUERY_ERROR', severity: 'error', message: 'Не удалось получить данные панели' });
+        }
+        const currentData = {
+          ...data,
+          series: unknownFailure ? [] : data.series.filter((frame) => !failedRefs.has(frame.refId)),
+        };
+        const rawQueriesData = await extractFields(currentData, customTimeSettings, timeRange);
+        if (!isCurrent()) {
           return;
         }
 
-        const queriesData = await calculateExpressions(transformationsExpressions, rawQueriesData, timeRange);
-        const evaluation = evaluatePanel(preparedConfig.rulesByElementId, queriesData);
+        if (notifyShow) {
+          // Имя — метаданные, его недоступность не должна отменять сами расчёты.
+          try {
+            await getDataSourceNames(currentData, rawQueriesData);
+          } catch (error) {
+            diagnostics.push({
+              code: 'DATASOURCE_NAME_ERROR',
+              severity: 'warning',
+              message: 'Не удалось получить имя источника данных',
+            });
+          }
+        }
+        if (!isCurrent()) {
+          return;
+        }
+        queriesData = await calculateExpressions(transformationsExpressions, rawQueriesData, timeRange, diagnostics);
+      } catch (error) {
+        diagnostics.push({
+          code: 'CALCULATION_ERROR',
+          severity: 'error',
+          message: `Ошибка обработки данных: ${error instanceof Error ? error.message : String(error)}`,
+        });
+        logger.error('usePanelData.process() failed', error, 'data');
+      }
+      if (!isCurrent()) {
+        return;
+      }
+      try {
+        const evaluation = evaluatePanel(preparedConfig.rulesByElementId, queriesData, {
+          timeTo: timeRange.to.valueOf(),
+          diagnostics,
+        });
         const result = buildPanelPresentation(evaluation, preparedConfig.elementsById, calculateOptions);
-
-        if (result && isActiveRef.current) {
+        if (isCurrent()) {
           setProcessedData({
+            generation,
+            timeRange,
+            evaluation,
             queriesData,
             tooltipContent: result.tooltipContent || [],
             dataSourceMap: result.dataSourceMap || EMPTY_DS_MAP,
@@ -144,26 +179,43 @@ export const usePanelData = (data: PanelData, timeRange: TimeRange, options: Pan
           });
         }
       } catch (err) {
-        errorStore.report(
-          err instanceof AppError
-            ? err
-            : new AppError('data', 'Ошибка обработки данных панели', {
-                cause: err instanceof Error ? err.message : err,
-              })
-        );
-        logger.error('usePanelData.process() failed', err, 'data');
+        // Даже непредусмотренная ошибка не оставляет старый успех текущим результатом.
+        diagnostics.push({
+          code: 'EVALUATION_ERROR',
+          severity: 'error',
+          message: `Ошибка оценки панели: ${err instanceof Error ? err.message : String(err)}`,
+        });
+        const evaluation: PanelEvaluation = { elements: [], diagnostics };
+        const reset = buildPanelPresentation(evaluation, preparedConfig.elementsById, calculateOptions);
+        setProcessedData({
+          generation,
+          timeRange,
+          evaluation,
+          queriesData,
+          tooltipContent: [],
+          dataSourceMap: EMPTY_DS_MAP,
+          operations: reset.operations,
+          gridContent: [],
+        });
       } finally {
-        if (isActiveRef.current) {
+        if (isCurrent()) {
           setIsLoading(false);
         }
       }
     };
 
     process();
-    return () => {
-      isActiveRef.current = false;
-    };
-  }, [data, timeRange, preparedConfig, customTimeSettings, calculateOptions, notifyShow, transformationsExpressions]);
+    return cleanup;
+  }, [
+    data,
+    timeRange,
+    parsedConfig,
+    preparedConfig,
+    customTimeSettings,
+    calculateOptions,
+    notifyShow,
+    transformationsExpressions,
+  ]);
 
   return {
     processedData,

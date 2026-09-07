@@ -17,6 +17,7 @@
 | C07 | Синтаксически неверный regex | `INVALID_PATTERN`; подготовка соседних правил не падает | [configSetup.test.ts](../src/components/infrastructure/config/configSetup.test.ts) |
 | C08 | Режим grid без SVG и неизвестный ID | Правило готовится, ошибки отсутствующего SVG нет | [configSetup.test.ts](../src/components/infrastructure/config/configSetup.test.ts) |
 | C09 | Один query отсутствует для правила с несколькими SVG IDs | Структурированная диагностика содержит `source` (включая `refId`) и все известные `elementIds` | [softPresentation.test.ts](../src/components/application/adapters/softPresentation.test.ts) |
+| C10 | Ошибка одной панели и успешное обновление другой | Диагностики обновляются и изолированы по панели | [usePanelData.test.ts](../src/components/application/hooks/usePanelData.test.ts) |
 
 ### Дополнительная форма конфигурации
 
@@ -40,7 +41,7 @@
 | C26 | Нестрочный `filling` и соседнее исправное правило | Есть `INVALID_FILLING`; DOM-операции не падают и соседнее оформление применяется | [softPresentation.test.ts](../src/components/application/adapters/softPresentation.test.ts) |
 | C27 | Смешанные fields и tables в `autoConfig` | Сохраняется совместимое раздельное позиционное распределение fields и tables | [dataHandler.test.ts](../src/components/domain/services/dataHandler.test.ts) |
 | C28 | В `autoConfig` полностью исчезает query | См. ограничение ниже: прежние тип и количество рядов не сохраняются, последующие позиции могут сдвинуться | [dataHandler.test.ts](../src/components/domain/services/dataHandler.test.ts) |
-| C29 | Сломанный XML или корень не является SVG | `initSVG` возвращает `null` вместо неверного документа | [updater.test.ts](../src/components/infrastructure/svg/updater.test.ts) |
+| C29 | Сломанный XML или корень не является SVG | Документ не передаётся в DOM; `initSVG` возвращает `null`, hook добавляет `INVALID_SVG` | [updater.test.ts](../src/components/infrastructure/svg/updater.test.ts) |
 
 ## Данные, расчёты и выбор winner
 
@@ -111,6 +112,8 @@
 | U01 | Все метрики отсутствуют, tooltip разрешён | Tooltip показывает объяснение и причины | [softPresentation.test.ts](../src/components/application/adapters/softPresentation.test.ts) |
 | U02 | Tooltip отключён явно или схемой | Tooltip не включается автоматически | [softPresentation.test.ts](../src/components/application/adapters/softPresentation.test.ts) |
 | U03 | No-data при `textAbove`/`textBelow` | Авторский текст остаётся, добавляется пояснение | [softPresentation.test.ts](../src/components/application/adapters/softPresentation.test.ts) |
+| U04 | `hideZeros`, нулевая строка и диагностическое сообщение | Ноль скрывается только в представлении; сообщение остаётся, исходный результат не мутирует | [tooltip.test.tsx](../src/components/presentation/tooltips/svgTooltip/tooltip.test.tsx) |
+| U05 | Tooltip: данные → пусто → данные | Hover и закреплённая подсказка всегда показывают актуальное содержимое | [tooltip.test.tsx](../src/components/presentation/tooltips/svgTooltip/tooltip.test.tsx) |
 | U06 | `stroke`, `strokeBase`, `none`, `:table` | Значение каждого режима оформления сохраняется | [updater.test.ts](../src/components/infrastructure/svg/updater.test.ts) |
 | U07 | Fill/stroke включён, затем снят | Старое динамическое оформление восстанавливается | [updater.test.ts](../src/components/infrastructure/svg/updater.test.ts) |
 | U08 | Inline style и изначально отсутствующий атрибут | Несвязанный style и исходное отсутствие сохраняются | [updater.test.ts](../src/components/infrastructure/svg/updater.test.ts) |
@@ -118,6 +121,9 @@
 | U10 | Позднее правило победило в grid | Grid получает цвет окончательного winner | [panelPresentation.test.ts](../src/components/application/adapters/panelPresentation.test.ts) |
 | U11 | Таблица или diagnostic перед числовым правилом | Числовое правило остаётся видимым в tooltip | [softPresentation.test.ts](../src/components/application/adapters/softPresentation.test.ts) |
 | U12 | Очищается неактивный вложенный SVG ID | Очистка не отменяет текущую окраску родительской группы | [softPresentation.test.ts](../src/components/application/adapters/softPresentation.test.ts) |
+| G01 | Старый запрос завершился после нового | Запоздалый результат отвергается | [usePanelData.test.ts](../src/components/application/hooks/usePanelData.test.ts) |
+| G02 | Успех → loading → ошибка | Старый успех не публикуется как актуальный | [usePanelData.test.ts](../src/components/application/hooks/usePanelData.test.ts) |
+| G03 | Конфиг/диапазон меняется во время обработки | Публикуется только актуальное обновление | [usePanelData.test.ts](../src/components/application/hooks/usePanelData.test.ts) |
 
 ## Известное ограничение C28
 

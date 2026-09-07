@@ -32,6 +32,7 @@ export const processTooltipContent = (
   if (!content) {
     return undefined;
   }
+  content = { ...content, queryData: content.queryData ? [...content.queryData] : undefined };
 
   // Фильтрация нулей в queryData
   if (options.hideZeros && content.queryData) {
