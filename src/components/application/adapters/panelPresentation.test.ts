@@ -134,7 +134,7 @@ describe('buildPanelPresentation', () => {
     expect(result.gridContent).toBeUndefined();
   });
 
-  it('preserves the grid color captured by the first dynamic rule', () => {
+  it('[U10] uses the final winner color in grid', () => {
     const firstAttributes: ConfigRules['attributes'] = { title: 'Synthetic cell' };
     const first = field({ color: '#00aa00', lvl: 0, metricValue: 1 });
     const second = field({ label: 'metric-b', color: '#ff0000', metricValue: 9 });
@@ -175,7 +175,7 @@ describe('buildPanelPresentation', () => {
       {
         id: 'cell-b',
         title: 'Synthetic cell',
-        color: '#00aa00',
+        color: '#ff0000',
         fields: [first, second],
         tables: [],
       },

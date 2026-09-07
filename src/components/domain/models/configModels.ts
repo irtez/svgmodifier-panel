@@ -1,5 +1,8 @@
+import type { Diagnostic, DiagnosticSource } from './diagnosticModels';
+
 export interface ConfigRules {
   id: string | string[];
+  source?: DiagnosticSource;
   attributes: {
     title?: string;
     autoConfig?: boolean;
@@ -87,6 +90,8 @@ export interface Threshold {
 
 export interface TooltipContent {
   id: string;
+  noData?: boolean;
+  diagnostics?: Diagnostic[];
   queryData?: Array<{
     label: string;
     metric: string;
@@ -110,6 +115,7 @@ export interface PreparedRule {
   elemIndex: number;
   elemsLength: number;
   attributes: ConfigRules['attributes'];
+  source?: DiagnosticSource;
 }
 
 export type RulesByElementId = Map<string, PreparedRule[]>;
@@ -136,7 +142,7 @@ export interface TableMetricData {
     lvl: number | undefined;
   }>;
   label: string;
-  metricValue: number;
+  metricValue?: number;
   displayValue?: string;
   filling?: string | undefined;
   title?: string | undefined;
@@ -144,6 +150,7 @@ export interface TableMetricData {
   lvl?: number | undefined;
   dsName?: string;
   refId?: string;
+  winningRowIndex?: number;
 }
 
 export interface GridContent {

@@ -26,6 +26,18 @@ export interface PanelPresentation {
   dataSourceMap: Map<string, Set<string>> | undefined;
 }
 
+const NO_DATA_COLOR = '#8e8e8e';
+const TOOLTIP_DIAGNOSTICS = new Set([
+  'MISSING_INPUT',
+  'EMPTY_INPUT',
+  'NON_FINITE_VALUE',
+  'CALCULATION_ERROR',
+  'INVALID_CONDITION',
+  'QUERY_ERROR',
+  'MISSING_FIELD',
+  'AMBIGUOUS_FIELD',
+]);
+
 export function buildPanelPresentation(
   evaluation: PanelEvaluation,
   elementsById: Map<string, SVGElement>,
@@ -35,6 +47,16 @@ export function buildPanelPresentation(
   const operations = options.mode === 'svg' ? ([] as Array<() => void>) : undefined;
   const gridContent = options.mode === 'grid' ? ([] as GridContent[]) : undefined;
   const dataSourceMap = options.notifySettings.show ? new Map<string, Set<string>>() : undefined;
+
+  // Сначала снимаем удалённые правила, затем красим текущие: id могут быть вложены.
+  if (operations) {
+    const activeIds = new Set(evaluation.elements.map((element) => element.id));
+    for (const [id, target] of elementsById) {
+      if (!activeIds.has(id)) {
+        operations.push(createSvgUpdateOperation(target));
+      }
+    }
+  }
 
   for (const element of evaluation.elements) {
     for (const rule of element.rules) {
@@ -48,6 +70,24 @@ export function buildPanelPresentation(
         }
         for (const table of rule.tables) {
           pushTooltipItem(element.id, table, rule.attributes.tooltip, tooltipContent);
+        }
+        const messages = rule.diagnostics?.filter((item) => TOOLTIP_DIAGNOSTICS.has(item.code)) ?? [];
+        if (messages.length || element.noData) {
+          let item = tooltipContent.find((item) => item.id === element.id);
+          if (!item) {
+            item = {
+              id: element.id,
+              textAbove: rule.attributes.tooltip.textAbove,
+              textBelow: rule.attributes.tooltip.textBelow,
+            };
+            tooltipContent.push(item);
+          }
+          if (messages.length) {
+            item.diagnostics = [...(item.diagnostics ?? []), ...messages];
+          }
+          if (element.noData) {
+            item.noData = true;
+          }
         }
       }
 
@@ -63,7 +103,7 @@ export function buildPanelPresentation(
           gridItem = {
             id: element.id,
             title: rule.attributes.title,
-            color: rule.elementWinnerAfterRule?.color,
+            color: element.noData ? NO_DATA_COLOR : element.winner?.color,
             fields: [],
             tables: [],
           };
@@ -77,7 +117,12 @@ export function buildPanelPresentation(
 
     if (operations) {
       operations.push(
-        createSvgUpdateOperation(elementsById.get(element.id)!, element.selectedAttributes!, element.winner!)
+        createSvgUpdateOperation(
+          elementsById.get(element.id),
+          element.selectedAttributes,
+          element.winner,
+          element.noData ? { color: NO_DATA_COLOR, filling: element.noData.filling } : undefined
+        )
       );
     }
   }
@@ -85,11 +130,7 @@ export function buildPanelPresentation(
   return { operations, tooltipContent, gridContent, dataSourceMap };
 }
 
-function collectDataSource(
-  field: MetricData,
-  threshold: number | undefined,
-  dataSourceMap: Map<string, Set<string>>
-) {
+function collectDataSource(field: MetricData, threshold: number | undefined, dataSourceMap: Map<string, Set<string>>) {
   const currentMetric = field.metricValue ?? Number.NEGATIVE_INFINITY;
   const currentLvl = field.lvl ?? Number.NEGATIVE_INFINITY;
 
@@ -152,7 +193,7 @@ function pushTooltipItem(
       textBelow,
     });
   } else {
-    tooltipItem.queryData?.push(queryData);
+    (tooltipItem.queryData ??= []).push(queryData);
   }
 }
 

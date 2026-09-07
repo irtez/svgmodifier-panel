@@ -1,6 +1,13 @@
 import { QuerySpecificSettings, Metrics, ValueMapping } from 'components/domain/models';
 
-export const defaultConfig = {
+type EffectiveSettings = QuerySpecificSettings & {
+  decimal: number;
+  filling: string;
+  calculation: NonNullable<QuerySpecificSettings['calculation']>;
+  mapping?: ValueMapping[];
+};
+
+export const defaultConfig: EffectiveSettings = {
   filter: undefined,
   sum: undefined,
   label: undefined,
@@ -30,5 +37,5 @@ export const getConfig = (queryConfig: QuerySpecificSettings, metricConfig: Metr
 
       return [key, fromQuery ?? fromMetric ?? defaultValue];
     })
-  ) as { [K in keyof typeof defaultConfig]: (typeof defaultConfig)[K] };
+  ) as EffectiveSettings;
 };

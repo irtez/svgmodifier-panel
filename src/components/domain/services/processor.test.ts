@@ -183,7 +183,7 @@ describe('evaluation and presentation behavior', () => {
     ]);
   });
 
-  it('keeps the grid color chosen when the first dynamic rule creates the item', () => {
+  it('[U10] uses the final winning rule color in grid', () => {
     const { root } = svgTarget('cell-c');
     const data: DataFrameMap = new Map([
       ['A', { values: new Map([['first', { values: ['1'] }]]) }],
@@ -216,7 +216,7 @@ describe('evaluation and presentation behavior', () => {
       {
         id: 'cell-c',
         title: 'Synthetic cell',
-        color: '#00aa00',
+        color: '#ff0000',
         fields: [
           {
             counter: 1,

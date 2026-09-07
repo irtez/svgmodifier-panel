@@ -1,252 +1,295 @@
 import { matchPattern } from '../utils/common';
-import { defaultConfig, getConfig } from 'components/infrastructure/config/configBuilder';
+import { getConfig } from 'components/infrastructure/config/configBuilder';
+import { resolveFilterDates } from 'components/infrastructure/config/parsers';
 import { formatValues } from '../utils/valueTransformer';
-import { getMappingMatch, calculateValue, getMetricColor, checkFilter } from 'components/domain/utils/calculations';
+import { getMappingMatch, calculateValue, getMetricColor, checkFilter } from '../utils/calculations';
+import { CalculationError, numericValue, reportCalculationError } from '../utils/diagnostics';
 import {
-  QuerySpecificSettings,
-  Metrics,
-  ValueMapping,
-  QueryType,
-  MetricData,
-  TableMetricData,
-  DataFrameMap,
   DataFrameEntry,
-} from 'components/domain/models';
+  DataFrameMap,
+  Diagnostic,
+  EvaluatedCandidate,
+  EvaluationContext,
+  MetricData,
+  Metrics,
+  QueryType,
+  TableMetricData,
+  ValueMapping,
+} from '../models';
 
-export type QueriesArray = {
+/** Неудачный расчёт сохраняет место для selectors/autoConfig, но не числовой candidate. */
+export interface QuerySlot {
+  counter: number;
+  candidate?: EvaluatedCandidate;
+  kind?: 'field' | 'table';
+  diagnostics: Diagnostic[];
+  filling?: string;
+}
+
+export interface QueriesArray {
   fields?: MetricData[];
   tables?: TableMetricData[];
-};
-
-type Fields = Array<{ legend: string; value: number; globalKey?: string }>;
-
-export function getMetricsData(metrics: Metrics[], data: DataFrameMap, mapping?: ValueMapping[]): QueriesArray {
-  const queriesArray: QueriesArray = { fields: [], tables: [] };
-
-  if (!data?.size || !metrics?.length) {
-    return queriesArray;
-  }
-
-  let counter = 1;
-  for (const metric of metrics) {
-    metric.queries?.forEach((query) => {
-      const config = getConfig(query, metric, mapping);
-      getQueriesFromDataFrame(query, queriesArray, data, config, counter++);
-    });
-  }
-
-  return queriesArray;
+  slots?: QuerySlot[];
 }
 
-function getQueriesFromDataFrame(
-  query: QueryType,
-  queriesArray: QueriesArray,
-  dataFrame: DataFrameMap,
-  config: typeof defaultConfig,
-  counter: number
-) {
-  if (query.refid) {
-    const extractedData = dataFrame.get(query.refid);
+type Settings = ReturnType<typeof getConfig>;
+type FieldResult = { legend: string; refId: string; value?: number; diagnostics: Diagnostic[] };
 
-    if (!extractedData) {
-      return;
-    }
-
-    if (extractedData.dataSourceName) {
-      query.dataSourceName = extractedData.dataSourceName;
-    }
-
-    if (extractedData.type === 'table') {
-      const table = processTable(extractedData, dataFrame, counter, config, query.refid);
-      if (table) {
-        queriesArray.tables?.push(table);
-      }
-    } else {
-      const fields: Fields = [];
-      for (const [innerKey, values] of extractedData.values) {
-        if (checkFilter(innerKey, config.filter)) {
-          const value = calculateValue(values.values.map(Number), config.calculation);
-          fields.push({ legend: innerKey, value, globalKey: query.refid });
+export function getMetricsData(
+  metrics: Metrics[],
+  data: DataFrameMap,
+  mapping?: ValueMapping[],
+  context: EvaluationContext = { timeTo: Date.now(), diagnostics: [] }
+): QueriesArray {
+  const result: QueriesArray = { fields: [], tables: [], slots: [] };
+  let counter = 0;
+  for (const metric of metrics ?? []) {
+    for (const query of metric.queries ?? []) {
+      counter++;
+      const settings = getConfig(query, metric, mapping);
+      const ctx: EvaluationContext = {
+        ...context,
+        diagnostics: [],
+        source: { ...context.source, refId: query.refid, legend: query.legend },
+      };
+      const start = result.slots!.length;
+      try {
+        if (typeof settings.filling !== 'string') {
+          throw new CalculationError('INVALID_FILLING', 'filling должен быть строкой');
         }
+        settings.filter = resolveFilterDates(settings.filter, context.timeTo);
+        processQuery(query, settings, data, result, counter, ctx);
+      } catch (error) {
+        reportCalculationError(ctx, error);
+        const entry = query.refid ? data.get(query.refid) : undefined;
+        result.slots!.push({
+          counter,
+          diagnostics: ctx.diagnostics,
+          kind: entry ? (entry.type === 'table' ? 'table' : 'field') : query.legend ? 'field' : undefined,
+          filling: typeof settings.filling === 'string' ? settings.filling : 'none',
+        });
       }
-      processFields(fields, queriesArray, config, dataFrame, counter);
+      for (const slot of result.slots!.slice(start)) {
+        context.diagnostics.push(...slot.diagnostics);
+      }
     }
   }
-
-  if (query.legend) {
-    const fields: Fields = [];
-    for (const [globalKey, metricData] of dataFrame) {
-      for (const [innerKey, values] of metricData.values) {
-        if (matchPattern(query.legend, innerKey) && checkFilter(innerKey, config.filter)) {
-          if (metricData.dataSourceName) {
-            query.dataSourceName = metricData.dataSourceName;
-          }
-          const value = calculateValue(values.values.map(Number), config.calculation);
-          fields.push({ legend: innerKey, value, globalKey });
-        }
-      }
-    }
-    processFields(fields, queriesArray, config, dataFrame, counter);
-  }
+  return result;
 }
 
-function processFields(
-  fields: Fields,
-  queriesArray: QueriesArray,
-  config: typeof defaultConfig,
-  dataFrame: DataFrameMap,
-  counter: number
-) {
-  if (fields.length === 0) {
-    return;
+function addCandidate(result: QueriesArray, candidate: EvaluatedCandidate, diagnostics: Diagnostic[]): void {
+  if ('columnsData' in candidate) {
+    result.tables!.push(candidate);
+  } else {
+    result.fields!.push(candidate);
   }
-
-  const addToArray = (value: number, title: string, label: string, refId?: string) => {
-    let displayValue = formatValues(value, config.unit, config.decimal);
-
-    if (config.mapping) {
-      displayValue = getMappingMatch(config.mapping, value, config.decimal) ?? displayValue;
-    }
-
-    const { color, lvl } = getMetricColor(value, dataFrame, config.thresholds, config.baseColor);
-
-    queriesArray.fields?.push({
-      counter: counter,
-      label,
-      color,
-      lvl,
-      metricValue: value,
-      displayValue,
-      filling: config.filling,
-      title,
-      dsName: config.dataSourceName,
-      refId: refId,
-    });
-  };
-
-  if (config.sum) {
-    const value = getSum(fields);
-    const title = getTitle(config.title, 0);
-    const label = getLabel(config.sum, config.label) || '';
-
-    addToArray(value, title, label);
-    return;
-  }
-
-  fields.forEach((query, index) => {
-    const value = query.value;
-    const title = getTitle(config.title, index);
-    const label = getLabel(query.legend, config.label) || '';
-    const refId = query.globalKey;
-
-    addToArray(value, title, label, refId);
+  result.slots!.push({
+    counter: candidate.counter,
+    candidate,
+    kind: 'columnsData' in candidate ? 'table' : 'field',
+    diagnostics,
+    filling: candidate.filling,
   });
 }
 
-function processTable(
-  extractedData: DataFrameEntry,
-  dataFrame: DataFrameMap,
+function processQuery(
+  query: QueryType,
+  settings: Settings,
+  data: DataFrameMap,
+  result: QueriesArray,
   counter: number,
-  config: typeof defaultConfig,
-  refId?: string
-) {
-  const headers = Array.from(extractedData.values.keys());
-  const colCount = headers.length;
-  const rowCount = extractedData.length;
-
-  if (!rowCount || !colCount) {
-    return;
-  }
-
-  const columns = Array.from(extractedData.values.values()).map((col) => col.values);
-
-  const table: TableMetricData = {
-    counter: counter,
-    headers: headers,
-    columnsData: [],
-    filling: config.filling,
-    title: config.title,
-    label: '',
-    metricValue: 0,
-    dsName: config.dataSourceName,
-    refId: refId,
-  };
-
-  let maxLvl = -1;
-  let thKeyIndex: number | undefined;
-
-  if (config.thresholdKey) {
-    const key = config.thresholdKey;
-    thKeyIndex = headers.findIndex((item: string) => item.startsWith(key));
-  }
-
-  for (let rowIndex = 0; rowIndex < rowCount; rowIndex++) {
-    const row = columns.map((col) => col[rowIndex]);
-
-    if (config.filter) {
-      const passes = headers.every((header, i) => checkFilter(String(row[i]), config.filter, header));
-      if (!passes) {
+  context: EvaluationContext
+): void {
+  const fields: FieldResult[] = [];
+  const collectFields = (entry: DataFrameEntry, refId: string, pattern?: string) => {
+    for (const [legend, field] of entry.values) {
+      if ((pattern && !matchPattern(pattern, legend)) || !checkFilter(legend, settings.filter)) {
         continue;
       }
+      const fieldContext = {
+        ...context,
+        diagnostics: [] as Diagnostic[],
+        source: { ...context.source, refId, legend },
+      };
+      let value: number | undefined;
+      try {
+        value = calculateValue(field.values.map(numericValue), settings.calculation);
+      } catch (error) {
+        reportCalculationError(fieldContext, error);
+      }
+      fields.push({ legend, refId, value, diagnostics: fieldContext.diagnostics });
     }
+  };
 
-    let color: string | undefined;
-    let lvl: number | undefined = -1;
-
-    if (thKeyIndex !== undefined && thKeyIndex !== -1) {
-      const rawValue = row[thKeyIndex];
-      const numericValue = Number(rawValue);
-      let displayValue = formatValues(numericValue, config.unit, config.decimal);
-
-      if (!isNaN(numericValue)) {
-        const result = getMetricColor(numericValue, dataFrame, config.thresholds, config.baseColor);
-        lvl = result.lvl;
-        color = result.color;
-
-        if (lvl > maxLvl) {
-          maxLvl = lvl;
-        }
-      }
-
-      if (config.mapping) {
-        displayValue = getMappingMatch(config.mapping, numericValue, config.decimal) ?? displayValue;
-      }
-
-      if (displayValue) {
-        row[thKeyIndex] = displayValue;
-      }
+  if (query.refid) {
+    const entry = data.get(query.refid);
+    if (!entry) {
+      throw new CalculationError('MISSING_INPUT', `Нет данных по запросу ${query.refid}`);
     }
-
-    table.columnsData.push({ row, color, lvl });
+    if (entry.type === 'table') {
+      const table = processTable(entry, data, settings, counter, query.refid, context);
+      addCandidate(result, table, context.diagnostics);
+    } else {
+      collectFields(entry, query.refid);
+    }
+  }
+  if (query.legend) {
+    for (const [refId, entry] of data) {
+      collectFields(entry, refId, query.legend);
+    }
+  }
+  if (!fields.length) {
+    if (query.refid && data.get(query.refid)?.type === 'table') {
+      return;
+    }
+    throw new CalculationError(
+      'EMPTY_INPUT',
+      `Нет подходящих значений для ${query.refid || query.legend || 'запроса'}`
+    );
   }
 
-  if (table.columnsData.length === 0) {
+  if (settings.sum) {
+    const failures = fields.flatMap((field) => field.diagnostics);
+    if (fields.some((field) => field.value === undefined)) {
+      // Неполная сумма не выдаётся за полную, остальные запросы продолжают работать.
+      result.slots!.push({ counter, kind: 'field', diagnostics: failures, filling: settings.filling });
+      return;
+    }
+    const total = fields.reduce((sum, field) => sum + field.value!, 0);
+    if (!Number.isFinite(total)) {
+      throw new CalculationError('NON_FINITE_VALUE', 'Сумма не вернула конечное число');
+    }
+    addField({ legend: settings.sum, refId: '', value: total, diagnostics: [] }, 0);
     return;
   }
-  table.lvl = maxLvl !== -1 ? maxLvl : 0;
-  table.color = table.columnsData[table.columnsData.length - 1].color;
+  fields.forEach(addField);
 
-  if (thKeyIndex !== undefined && thKeyIndex !== -1) {
-    table.label = headers[thKeyIndex];
-    table.metricValue = table.columnsData[table.columnsData.length - 1].row[thKeyIndex];
+  function addField(field: FieldResult, index: number): void {
+    if (field.value === undefined) {
+      result.slots!.push({ counter, kind: 'field', diagnostics: field.diagnostics, filling: settings.filling });
+      return;
+    }
+    const ctx = {
+      ...context,
+      diagnostics: field.diagnostics,
+      source: { ...context.source, refId: field.refId || undefined, legend: field.legend },
+    };
+    const { color, lvl } = getMetricColor(field.value, data, settings.thresholds, settings.baseColor, ctx);
+    let displayValue = formatValues(field.value, settings.unit, settings.decimal);
+    if (settings.mapping) {
+      displayValue = getMappingMatch(settings.mapping, field.value, settings.decimal) ?? displayValue;
+    }
+    addCandidate(
+      result,
+      {
+        counter,
+        label: getLabel(field.legend, settings.label),
+        color,
+        lvl,
+        metricValue: field.value,
+        displayValue,
+        filling: settings.filling,
+        title: index === 0 ? settings.title || '' : '',
+        dsName: settings.dataSourceName ?? data.get(field.refId)?.dataSourceName,
+        refId: field.refId || undefined,
+      },
+      field.diagnostics
+    );
   }
+}
 
+function processTable(
+  entry: DataFrameEntry,
+  data: DataFrameMap,
+  settings: Settings,
+  counter: number,
+  refId: string,
+  context: EvaluationContext
+): TableMetricData {
+  const headers = [...entry.values.keys()];
+  const columns = [...entry.values.values()].map((field) => field.values);
+  const rowCount = entry.length ?? columns[0]?.length ?? 0;
+  if (!headers.length || !rowCount) {
+    throw new CalculationError('EMPTY_INPUT', 'Таблица не содержит строк');
+  }
+  let thresholdIndex: number | undefined;
+  if (settings.thresholdKey) {
+    const exact = headers.indexOf(settings.thresholdKey);
+    const matches = headers.flatMap((header, index) => (header.startsWith(settings.thresholdKey!) ? [index] : []));
+    if (exact >= 0) {
+      thresholdIndex = exact;
+    } else if (matches.length === 1) {
+      thresholdIndex = matches[0];
+    } else {
+      throw new CalculationError(
+        matches.length ? 'AMBIGUOUS_FIELD' : 'MISSING_FIELD',
+        matches.length
+          ? `Несколько колонок подходят под ${settings.thresholdKey}`
+          : `Колонка ${settings.thresholdKey} не найдена`
+      );
+    }
+  }
+  const table: TableMetricData = {
+    counter,
+    headers,
+    columnsData: [],
+    filling: settings.filling,
+    title: settings.title,
+    label: thresholdIndex === undefined ? '' : headers[thresholdIndex],
+    dsName: settings.dataSourceName ?? entry.dataSourceName,
+    refId,
+  };
+  let winner: { value: number; displayValue: string; color?: string; lvl: number; rowIndex: number } | undefined;
+  for (let i = 0; i < rowCount; i++) {
+    const row = columns.map((column) => column[i]);
+    if (!headers.every((header, column) => checkFilter(String(row[column]), settings.filter, header))) {
+      continue;
+    }
+    let color: string | undefined;
+    let lvl: number | undefined;
+    if (thresholdIndex !== undefined) {
+      const value = numericValue(row[thresholdIndex]);
+      if (!Number.isFinite(value)) {
+        reportCalculationError(
+          context,
+          new CalculationError(
+            'NON_FINITE_VALUE',
+            `Строка ${i + 1}: значение ${headers[thresholdIndex]} не является конечным числом`
+          )
+        );
+      } else {
+        ({ color, lvl } = getMetricColor(value, data, settings.thresholds, settings.baseColor, context));
+        const displayValue =
+          (settings.mapping && getMappingMatch(settings.mapping, value, settings.decimal)) ??
+          formatValues(value, settings.unit, settings.decimal);
+        row[thresholdIndex] = displayValue;
+        if (!winner || lvl > winner.lvl) {
+          winner = { value, color, lvl, displayValue, rowIndex: table.columnsData.length };
+        }
+      }
+    }
+    table.columnsData.push({ row, color, lvl });
+  }
+  if (!table.columnsData.length) {
+    throw new CalculationError('EMPTY_INPUT', 'После фильтрации в таблице нет строк');
+  }
+  if (thresholdIndex !== undefined && !winner) {
+    // Ошибки строк уже объясняют причину; общий результат таблицы отсутствует.
+    throw new CalculationError('EMPTY_INPUT', 'В выбранной колонке нет пригодных значений');
+  }
+  if (winner) {
+    table.metricValue = winner.value;
+    table.displayValue = winner.displayValue;
+    table.color = winner.color;
+    table.lvl = winner.lvl;
+    table.winningRowIndex = winner.rowIndex;
+  } else {
+    // Таблица без thresholdKey предназначена для чтения, не для выбора цвета.
+    table.lvl = 0;
+  }
   return table;
 }
 
 function getLabel(displayName: string, label?: string): string {
-  if (!label) {
-    label = displayName;
-  }
-
-  label = label.replace(/_prfx\d+/g, '').replace(/\{\{legend\}\}/g, displayName);
-  return label;
-}
-
-function getTitle(query: QuerySpecificSettings['title'], counter: number): string {
-  return query && counter === 0 ? query : '';
-}
-
-function getSum(data: Fields): number {
-  return data.reduce((acc, item) => acc + item.value, 0);
+  return (label || displayName).replace(/_prfx\d+/g, '').replace(/\{\{legend\}\}/g, displayName);
 }

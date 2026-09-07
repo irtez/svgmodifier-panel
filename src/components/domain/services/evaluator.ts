@@ -5,20 +5,30 @@ import {
   PanelEvaluation,
   RuleEvaluation,
   RulesByElementId,
+  Diagnostic,
+  EvaluationContext,
 } from 'components/domain/models';
 import { getMetricsData } from './dataHandler';
 import { queriesFilter } from './queryFilter';
 import { selectBestQuery } from './queryProcessor';
 
-export function evaluatePanel(rulesByElementId: RulesByElementId, data: DataFrameMap): PanelEvaluation {
+export function evaluatePanel(
+  rulesByElementId: RulesByElementId,
+  data: DataFrameMap,
+  context: EvaluationContext = { timeTo: Date.now(), diagnostics: [] }
+): PanelEvaluation {
   const elements: PanelEvaluation['elements'] = [];
+  const diagnostics = [...context.diagnostics];
 
   for (const [id, rules] of rulesByElementId) {
     let bestGlobalLvl = Number.NEGATIVE_INFINITY;
-    let bestGlobalMetric = Number.NEGATIVE_INFINITY;
     let selectedAttributes: ConfigRules['attributes'] | undefined;
     let winner: EvaluatedCandidate | undefined;
     const evaluatedRules: RuleEvaluation[] = [];
+    let firstDynamicAttributes: ConfigRules['attributes'] | undefined;
+    let noDataFilling: string | undefined;
+    let noDataAttributes: ConfigRules['attributes'] | undefined;
+    let hasUnavailableMetric = false;
 
     for (const rule of rules) {
       const { attributes, selector, elemIndex, elemsLength } = rule;
@@ -39,21 +49,34 @@ export function evaluatePanel(rulesByElementId: RulesByElementId, data: DataFram
         continue;
       }
 
-      const candidates = queriesFilter(
-        getMetricsData(attributes.metrics!, data, attributes.valueMapping),
-        selector,
-        elemIndex,
-        elemsLength,
-        attributes.autoConfig
-      );
+      firstDynamicAttributes ??= attributes;
+      const ruleContext = { ...context, diagnostics: [] as Diagnostic[], source: rule.source, elementIds: [id] };
+      const allCandidates = getMetricsData(attributes.metrics!, data, attributes.valueMapping, ruleContext);
+      const candidates = queriesFilter(allCandidates, selector, elemIndex, elemsLength, attributes.autoConfig);
+      const ruleDiagnostics = candidates.slots?.flatMap((slot) => slot.diagnostics) ?? [];
+      const unavailableSlot = candidates.slots?.find((slot) => !slot.candidate);
+      if (!candidates.slots?.length || unavailableSlot) {
+        hasUnavailableMetric = true;
+        noDataAttributes ??= attributes;
+        noDataFilling ??=
+          unavailableSlot?.filling ?? allCandidates.slots?.[0]?.filling ?? attributes.metrics?.[0]?.filling;
+      }
+      // Ошибка формулы относится и к элементам, использующим её refId.
+      for (const diagnostic of context.diagnostics) {
+        const inputRef = diagnostic.source?.expressionRefId ?? diagnostic.source?.refId;
+        const relevantFailure =
+          diagnostic.code === 'QUERY_ERROR' ||
+          diagnostic.code === 'CALCULATION_ERROR' ||
+          diagnostic.source?.expressionRefId;
+        if (relevantFailure && (!inputRef || ruleDiagnostics.some((item) => item.source?.refId === inputRef))) {
+          ruleDiagnostics.push({ ...diagnostic, elementIds: [id] });
+        }
+      }
+      diagnostics.push(...ruleDiagnostics);
       const selection = selectBestQuery(candidates);
 
-      if (
-        selection.bestLvl > bestGlobalLvl ||
-        (selection.bestLvl === bestGlobalLvl && selection.bestMetric > bestGlobalMetric)
-      ) {
+      if (selection.bestLvl > bestGlobalLvl) {
         bestGlobalLvl = selection.bestLvl;
-        bestGlobalMetric = selection.bestMetric;
         winner = selection.winner;
         selectedAttributes = attributes;
       }
@@ -65,16 +88,43 @@ export function evaluatePanel(rulesByElementId: RulesByElementId, data: DataFram
         tables: candidates.tables ?? [],
         winner: selection.winner,
         elementWinnerAfterRule: winner,
+        ...(ruleDiagnostics.length ? { diagnostics: ruleDiagnostics } : {}),
       });
     }
 
+    const noData = firstDynamicAttributes && !winner && hasUnavailableMetric;
     elements.push({
       id,
       rules: evaluatedRules,
       winner,
-      selectedAttributes,
+      selectedAttributes: selectedAttributes ?? (noData ? noDataAttributes : firstDynamicAttributes),
+      ...(noData ? { noData: { filling: noDataFilling } } : {}),
     });
   }
 
-  return { elements };
+  return { elements, diagnostics: mergeDiagnostics(diagnostics, rulesByElementId) };
+}
+
+function mergeDiagnostics(diagnostics: Diagnostic[], rules: RulesByElementId): Diagnostic[] {
+  const unique = new Map<string, Diagnostic>();
+  const bindingErrors = new Set(['MISSING_ELEMENT', 'UNMATCHED_PATTERN', 'INVALID_PATTERN', 'INVALID_SELECTOR']);
+  for (const diagnostic of diagnostics) {
+    const key = JSON.stringify([diagnostic.code, diagnostic.severity, diagnostic.message, diagnostic.source]);
+    const ids = new Set([...(unique.get(key)?.elementIds ?? []), ...(diagnostic.elementIds ?? [])]);
+    // Ошибка нормализации ещё не знает DOM, но сохранила путь исходного правила.
+    if (!diagnostic.elementIds && diagnostic.source?.path && !bindingErrors.has(diagnostic.code)) {
+      for (const [id, elementRules] of rules) {
+        if (
+          elementRules.some(
+            (rule) =>
+              rule.source?.path === diagnostic.source?.path && rule.source?.pageIndex === diagnostic.source?.pageIndex
+          )
+        ) {
+          ids.add(id);
+        }
+      }
+    }
+    unique.set(key, { ...diagnostic, ...(ids.size ? { elementIds: [...ids] } : {}) });
+  }
+  return [...unique.values()];
 }

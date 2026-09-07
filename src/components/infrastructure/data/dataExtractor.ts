@@ -18,25 +18,26 @@ export async function extractFields(panelData: PanelData, timeSettings: FieldsTi
     const visualType = meta?.preferredVisualisationType;
     const CustomRangeTime = timeSettings?.fields?.get(refId) || timeSettings?.global;
 
-    if (visualType === 'graph' || frame.fields.length === 2) {
-      const timeField = fields.find((field) => field.type === FieldType.time);
-      const valueField = fields.find((field) => field.type === FieldType.number);
-
-      if (!valueField) {
+    const timeField = fields.find((field) => field.type === FieldType.time);
+    const valueFields = fields.filter((field) => field.type === FieldType.number);
+    if (visualType === 'graph' || (visualType !== 'table' && timeField && valueFields.length > 0)) {
+      if (valueFields.length === 0) {
         continue;
       }
 
-      let values = valueField?.values.map(String);
-      let timestamps = timeField?.values.map(Number) || [];
-      const fieldDisplayName = getFieldDisplayName(valueField, frame, dataFrame);
+      for (const valueField of valueFields) {
+        let values = valueField?.values.map(String);
+        let timestamps = timeField?.values.map(Number) || [];
+        const fieldDisplayName = getFieldDisplayName(valueField, frame, dataFrame);
 
-      if (CustomRangeTime) {
-        const result = getFieldTimeRange(timestamps, values, CustomRangeTime, timeRange);
-        values = result.values;
-        timestamps = result.timestamps;
+        if (CustomRangeTime) {
+          const result = getFieldTimeRange(timestamps, values, CustomRangeTime, timeRange);
+          values = result.values;
+          timestamps = result.timestamps;
+        }
+
+        addToMap(refId, valueMap, values, fieldDisplayName, timestamps, 'graph');
       }
-
-      addToMap(refId, valueMap, values, fieldDisplayName, timestamps, 'graph');
       continue;
     }
 
