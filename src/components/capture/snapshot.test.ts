@@ -409,3 +409,101 @@ it('[X26] источник ошибки содержит известные ин
   expect(missing.source).toMatchObject({ metricsIndex: 0, queryIndex: 1, refId: 'MISSING' });
   expect(missing.metricIds).toEqual([snapshot.metrics[1].id]);
 });
+
+it('[X27] explicit selectors сохраняют реальные назначения query', async () => {
+  const { snapshot } = await run(config('[{refid: A}, {refid: B}]').replace('id: a', 'id: ["a:@2", "b:@1"]'), [
+    graph('A', 'first', [12]),
+    graph('B', 'second', [95]),
+  ]);
+  expect(
+    snapshot.elements.map((element) => [
+      element.id,
+      snapshot.metrics.find((metric) => metric.id === element.winnerMetricId)?.sources[0].refId,
+    ])
+  ).toEqual([
+    ['cell-a', 'B'],
+    ['cell-b', 'A'],
+  ]);
+  expect(snapshot.elements.map((element) => element.ruleResults[0].metricIds.length)).toEqual([1, 1]);
+});
+
+it('[X28] regex сохраняет фактически найденные SVG IDs и исходный selector', async () => {
+  const svg = new DOMParser().parseFromString(
+    '<svg xmlns="http://www.w3.org/2000/svg"><rect id="cell-a"/><rect id="cell-b"/></svg>',
+    'image/svg+xml'
+  );
+  const { snapshot } = await run(
+    config('[{refid: A}]').replace('id: a', 'id: "cell-.*"'),
+    [graph('A', 'value', [12])],
+    [],
+    svg
+  );
+  expect(snapshot.elements.map((element) => element.id)).toEqual(['cell-a', 'cell-b']);
+  expect(snapshot.configuration.rules.map((rule) => rule.selector)).toEqual(['cell-.*', 'cell-.*']);
+});
+
+it('[X29] независимые autoConfig-правила не склеивают разные серии одного значка', async () => {
+  const first = config('[{refid: A1}, {refid: A2}]')
+    .replace('id: a', 'id: [a, b]')
+    .replace('title: Service Alpha', 'autoConfig: true');
+  const second = config('[{refid: B1}, {refid: B2}]')
+    .replace('id: a', 'id: [a, b]')
+    .replace('title: Service Alpha', 'autoConfig: true');
+  const { snapshot } = await run(first + second.replace('changes:\n', '\n'), [
+    graph('A2', 'shifted', [2]),
+    graph('B1', 'first', [5]),
+    graph('B2', 'second', [8]),
+  ]);
+  expect(
+    snapshot.elements.map((element) =>
+      element.ruleResults.map((result) =>
+        result.metricIds.map((id) => snapshot.metrics.find((metric) => metric.id === id)!.sources[0].refId)
+      )
+    )
+  ).toEqual([
+    [['A2'], ['B1']],
+    [[], ['B2']],
+  ]);
+  expect(
+    snapshot.metrics.filter((metric) => metric.selectors.refId === 'A1').every((metric) => !metric.elementIds.length)
+  ).toBe(true);
+});
+
+it.each(['empty', 'ambiguous'])('[X30] %s table сохраняет причину и уже известные данные', async (kind) => {
+  const frame = table();
+  if (kind === 'empty') {
+    frame.length = 0;
+    frame.fields.forEach((field) => {
+      field.values = [];
+    });
+  } else {
+    frame.fields[1].config.displayName = 'ValueOne';
+    frame.fields.push({
+      name: 'ValueTwo',
+      type: FieldType.number,
+      config: { displayName: 'ValueTwo' },
+      values: [1, 2, 3],
+    });
+  }
+  const { snapshot } = await run(config('[{refid: T}]', 'thresholdKey: Value'), [frame]);
+  expect(snapshot.metrics[0].availability).toBe('unavailable');
+  expect(snapshot.metrics[0].table?.rows).toHaveLength(kind === 'empty' ? 0 : 3);
+  expect(
+    snapshot.diagnostics.some((item) => item.code === (kind === 'empty' ? 'EMPTY_INPUT' : 'AMBIGUOUS_FIELD'))
+  ).toBe(true);
+});
+
+it('[X31] равные уровни сохраняют первого winner, а внутри метрики — последний совпавший порог', async () => {
+  const { snapshot } = await run(config('[{refid: A}, {refid: B}]'), [
+    graph('A', 'first', [12]),
+    graph('B', 'second', [95]),
+  ]);
+  expect(snapshot.elements[0].winnerMetricId).toBe(snapshot.metrics[0].id);
+  const last = await run(
+    config('[{refid: A}]').replace(
+      'thresholds: [{value: 10, color: red, lvl: 2}]',
+      'thresholds: [{value: 10, color: red, lvl: 2}, {value: 0, color: green, lvl: 0}]'
+    )
+  );
+  expect(last.snapshot.metrics[0].scalar).toMatchObject({ level: 0, color: 'green', selectedThresholdIndex: 1 });
+});
