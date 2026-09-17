@@ -70,6 +70,7 @@
     "build": "webpack -c ./.config/webpack/webpack.config.ts --env production",
     "capture:types": "node scripts/generate-capture-types.cjs",
     "capture:types:check": "node scripts/generate-capture-types.cjs --check",
+    "test:capture:diagram": "node tests/capture/diagram.browser.cjs",
     "dev": "webpack -w -c ./.config/webpack/webpack.config.ts --env development",
     "e2e": "playwright test",
     "lint": "eslint --cache --ignore-path ./.gitignore --ext .js,.jsx,.ts,.tsx .",
