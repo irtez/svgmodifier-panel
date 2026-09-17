@@ -366,7 +366,7 @@
     "CapturedRule": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "source", "selector", "attributes", "elementIds", "diagnosticIds"],
+      "required": ["id", "source", "selector", "attributes", "authoredAttributes", "elementIds", "diagnosticIds"],
       "properties": {
         "id": {
           "type": "string",
@@ -379,6 +379,9 @@
           "$ref": "#/definitions/JsonValue"
         },
         "attributes": {
+          "$ref": "#/definitions/JsonObject"
+        },
+        "authoredAttributes": {
           "$ref": "#/definitions/JsonObject"
         },
         "elementIds": {
@@ -925,8 +928,9 @@
     "CapturedTable": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["columns", "rows", "thresholdColumnIndex", "winningRowIndex"],
+      "required": ["columns", "rows", "thresholdColumnIndex", "winningRowIndex", "rowFilterStatus"],
       "properties": {
+        "rowFilterStatus": { "type": "string", "enum": ["not_evaluated", "incomplete", "applied"] },
         "columns": {
           "type": "array",
           "items": {
@@ -1029,7 +1033,7 @@
           "maximum": 9007199254740991
         },
         "selection": {
-          "enum": ["refid", "legend", "refid_and_legend"],
+          "enum": ["refid", "legend", "refid_and_legend", "none"],
           "type": "string"
         },
         "selectors": {

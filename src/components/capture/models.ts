@@ -51,6 +51,7 @@ export interface CapturedRule {
   source: SourceLocation;
   selector: JsonValue;
   attributes: JsonObject;
+  authoredAttributes: JsonObject;
   elementIds: string[];
   diagnosticIds: string[];
 }
@@ -98,7 +99,7 @@ export interface CapturedMetric {
   metricsIndex: number;
   queryIndex: number;
   queryCounter: number;
-  selection: 'refid' | 'legend' | 'refid_and_legend';
+  selection: 'refid' | 'legend' | 'refid_and_legend' | 'none';
   selectors: {
     refId: string | null;
     legend: string | null;
@@ -162,6 +163,7 @@ export interface ExpressionInput {
   diagnosticIds: string[];
 }
 export interface CapturedTable {
+  rowFilterStatus: 'not_evaluated' | 'incomplete' | 'applied';
   columns: Array<{
     name: string;
     type: string | null;

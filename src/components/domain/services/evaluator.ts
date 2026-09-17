@@ -9,13 +9,15 @@ import {
   EvaluationContext,
 } from 'components/domain/models';
 import { getMetricsData } from './dataHandler';
+import type { EvaluationTrace } from 'components/capture/trace';
 import { queriesFilter } from './queryFilter';
 import { selectBestQuery } from './queryProcessor';
 
 export function evaluatePanel(
   rulesByElementId: RulesByElementId,
   data: DataFrameMap,
-  context: EvaluationContext = { timeTo: Date.now(), diagnostics: [] }
+  context: EvaluationContext = { timeTo: Date.now(), diagnostics: [] },
+  capture?: EvaluationTrace
 ): PanelEvaluation {
   const elements: PanelEvaluation['elements'] = [];
   const diagnostics = [...context.diagnostics];
@@ -31,6 +33,7 @@ export function evaluatePanel(
     let hasUnavailableMetric = false;
 
     for (const rule of rules) {
+      const ruleCapture = capture?.beginRule(rule, id);
       const { attributes, selector, elemIndex, elemsLength } = rule;
       const hasMetrics = Boolean(attributes?.metrics?.length);
 
@@ -51,8 +54,17 @@ export function evaluatePanel(
 
       firstDynamicAttributes ??= attributes;
       const ruleContext = { ...context, diagnostics: [] as Diagnostic[], source: rule.source, elementIds: [id] };
-      const allCandidates = getMetricsData(attributes.metrics!, data, attributes.valueMapping, ruleContext);
+      const allCandidates = getMetricsData(
+        attributes.metrics!,
+        data,
+        attributes.valueMapping,
+        ruleContext,
+        ruleCapture
+      );
       const candidates = queriesFilter(allCandidates, selector, elemIndex, elemsLength, attributes.autoConfig);
+      if (ruleCapture) {
+        ruleCapture.assigned = new Set(candidates.slots);
+      }
       const autoDistribution = attributes.autoConfig && !selector?.length;
       if (autoDistribution) {
         // У неудачного расчёта есть источник, но нет назначенного значка.

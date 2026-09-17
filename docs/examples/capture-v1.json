@@ -40,6 +40,17 @@
           "expressionRefId": null
         },
         "selector": "cell-alpha",
+        "authoredAttributes": {
+          "title": "Service Alpha",
+          "tooltip": { "show": false },
+          "link": "/d/example-service?var-node=alpha",
+          "metrics": [
+            {
+              "queries": [{ "refid": "CALC" }, { "refid": "MISSING" }],
+              "thresholds": [{ "value": 10, "operator": ">=", "lvl": 2, "color": "#ef4444" }]
+            }
+          ]
+        },
         "attributes": {
           "title": "Service Alpha",
           "tooltip": {
@@ -88,6 +99,14 @@
           "expressionRefId": null
         },
         "selector": "cell-table",
+        "authoredAttributes": {
+          "metrics": [
+            {
+              "queries": [{ "refid": "TABLE" }],
+              "thresholds": [{ "value": 10, "operator": ">=", "lvl": 2, "color": "#ef4444" }]
+            }
+          ]
+        },
         "attributes": {
           "metrics": [
             {
@@ -292,6 +311,7 @@
       "kind": "table",
       "scalar": null,
       "table": {
+        "rowFilterStatus": "applied",
         "columns": [
           {
             "name": "Node",

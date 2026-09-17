@@ -1,4 +1,5 @@
 import { matchPattern } from '../utils/common';
+import type { QueryTrace, RuleTrace } from 'components/capture/trace';
 import { getConfig } from 'components/infrastructure/config/configBuilder';
 import { resolveFilterDates } from 'components/infrastructure/config/parsers';
 import { formatValues } from '../utils/valueTransformer';
@@ -38,21 +39,23 @@ export function getMetricsData(
   metrics: Metrics[],
   data: DataFrameMap,
   mapping?: ValueMapping[],
-  context: EvaluationContext = { timeTo: Date.now(), diagnostics: [] }
+  context: EvaluationContext = { timeTo: Date.now(), diagnostics: [] },
+  capture?: RuleTrace
 ): QueriesArray {
   const result: QueriesArray = { fields: [], tables: [], slots: [] };
   let counter = 0;
-  for (const metric of metrics ?? []) {
-    for (const query of metric.queries ?? []) {
+  for (let metricsIndex = 0; metricsIndex < (metrics?.length ?? 0); metricsIndex++) {
+    const metric = metrics[metricsIndex];
+    for (let queryIndex = 0; queryIndex < (metric.queries?.length ?? 0); queryIndex++) {
+      const query = metric.queries![queryIndex];
       counter++;
       const settings = getConfig(query, metric, mapping);
       // Старый YAML допускает оба способа выбора: sum считается для каждого
       // отдельно. Номер query общий, поэтому явные selectors не меняются.
       const selections: QueryType[] =
-        settings.sum && query.refid && query.legend
-          ? [{ refid: query.refid }, { legend: query.legend }]
-          : [query];
+        settings.sum && query.refid && query.legend ? [{ refid: query.refid }, { legend: query.legend }] : [query];
       for (const selection of selections) {
+        const queryCapture = capture?.query(metricsIndex, queryIndex, counter, selection, settings);
         const ctx: EvaluationContext = {
           ...context,
           diagnostics: [],
@@ -64,14 +67,18 @@ export function getMetricsData(
             throw new CalculationError('INVALID_FILLING', 'filling должен быть строкой');
           }
           settings.filter = resolveFilterDates(settings.filter, context.timeTo);
-          processQuery(selection, settings, data, result, counter, ctx);
+          processQuery(selection, settings, data, result, counter, ctx, queryCapture);
         } catch (error) {
           reportCalculationError(ctx, error);
-          result.slots!.push({
-            counter,
-            diagnostics: ctx.diagnostics,
-            filling: typeof settings.filling === 'string' ? settings.filling : 'none',
-          });
+          appendSlot(
+            result,
+            {
+              counter,
+              diagnostics: ctx.diagnostics,
+              filling: typeof settings.filling === 'string' ? settings.filling : 'none',
+            },
+            queryCapture
+          );
         }
         for (const slot of result.slots!.slice(start)) {
           context.diagnostics.push(...slot.diagnostics);
@@ -82,18 +89,32 @@ export function getMetricsData(
   return result;
 }
 
-function addCandidate(result: QueriesArray, candidate: EvaluatedCandidate, diagnostics: Diagnostic[]): void {
+function appendSlot(result: QueriesArray, slot: QuerySlot, capture?: QueryTrace): void {
+  result.slots!.push(slot);
+  capture?.record(slot);
+}
+
+function addCandidate(
+  result: QueriesArray,
+  candidate: EvaluatedCandidate,
+  diagnostics: Diagnostic[],
+  capture?: QueryTrace
+): void {
   if ('columnsData' in candidate) {
     result.tables!.push(candidate);
   } else {
     result.fields!.push(candidate);
   }
-  result.slots!.push({
-    counter: candidate.counter,
-    candidate,
-    diagnostics,
-    filling: candidate.filling,
-  });
+  appendSlot(
+    result,
+    {
+      counter: candidate.counter,
+      candidate,
+      diagnostics,
+      filling: candidate.filling,
+    },
+    capture
+  );
 }
 
 function processQuery(
@@ -102,7 +123,8 @@ function processQuery(
   data: DataFrameMap,
   result: QueriesArray,
   counter: number,
-  context: EvaluationContext
+  context: EvaluationContext,
+  capture?: QueryTrace
 ): void {
   const fields: FieldResult[] = [];
   const collectFields = (entry: DataFrameEntry, refId: string, pattern?: string) => {
@@ -116,8 +138,12 @@ function processQuery(
         source: { ...context.source, refId, legend },
       };
       let value: number | undefined;
+      const sourceCapture = capture?.source(refId, legend, field, fieldContext.diagnostics, entry.dataSourceName);
       try {
-        value = calculateValue(field.values.map(numericValue), settings.calculation);
+        value = calculateValue(field.values.map(numericValue), settings.calculation, sourceCapture);
+        if (sourceCapture) {
+          sourceCapture.value = value;
+        }
       } catch (error) {
         reportCalculationError(fieldContext, error);
       }
@@ -131,8 +157,9 @@ function processQuery(
       throw new CalculationError('MISSING_INPUT', `Нет данных по запросу ${query.refid}`);
     }
     if (entry.type === 'table') {
-      const table = processTable(entry, data, settings, counter, query.refid, context);
-      addCandidate(result, table, context.diagnostics);
+      capture?.table(entry, query.refid);
+      const table = processTable(entry, data, settings, counter, query.refid, context, capture);
+      addCandidate(result, table, context.diagnostics, capture);
     } else {
       collectFields(entry, query.refid);
     }
@@ -156,7 +183,7 @@ function processQuery(
     const failures = fields.flatMap((field) => field.diagnostics);
     if (fields.some((field) => field.value === undefined)) {
       // Неполная сумма не выдаётся за полную, остальные запросы продолжают работать.
-      result.slots!.push({ counter, diagnostics: failures, filling: settings.filling });
+      appendSlot(result, { counter, diagnostics: failures, filling: settings.filling }, capture);
       return;
     }
     const total = fields.reduce((sum, field) => sum + field.value!, 0);
@@ -169,8 +196,9 @@ function processQuery(
   fields.forEach(addField);
 
   function addField(field: FieldResult, index: number): void {
+    capture?.scalar(settings.sum ? null : index);
     if (field.value === undefined) {
-      result.slots!.push({ counter, diagnostics: field.diagnostics, filling: settings.filling });
+      appendSlot(result, { counter, diagnostics: field.diagnostics, filling: settings.filling }, capture);
       return;
     }
     const ctx = {
@@ -178,7 +206,14 @@ function processQuery(
       diagnostics: field.diagnostics,
       source: { ...context.source, refId: field.refId || undefined, legend: field.legend },
     };
-    const { color, lvl } = getMetricColor(field.value, data, settings.thresholds, settings.baseColor, ctx);
+    const { color, lvl } = getMetricColor(
+      field.value,
+      data,
+      settings.thresholds,
+      settings.baseColor,
+      ctx,
+      capture?.current?.color
+    );
     let displayValue = formatValues(field.value, settings.unit, settings.decimal);
     if (settings.mapping) {
       displayValue = getMappingMatch(settings.mapping, field.value, settings.decimal) ?? displayValue;
@@ -197,7 +232,8 @@ function processQuery(
         dsName: settings.dataSourceName ?? data.get(field.refId)?.dataSourceName,
         refId: field.refId || undefined,
       },
-      field.diagnostics
+      field.diagnostics,
+      capture
     );
   }
 }
@@ -208,7 +244,8 @@ function processTable(
   settings: Settings,
   counter: number,
   refId: string,
-  context: EvaluationContext
+  context: EvaluationContext,
+  capture?: QueryTrace
 ): TableMetricData {
   const headers = [...entry.values.keys()];
   const columns = [...entry.values.values()].map((field) => field.values);
@@ -243,12 +280,20 @@ function processTable(
     dsName: settings.dataSourceName ?? entry.dataSourceName,
     refId,
   };
+  if (capture?.current?.table) {
+    capture.current.table.thresholdColumnIndex = thresholdIndex ?? null;
+    capture.current.table.rowFilterStatus = 'incomplete';
+  }
   let winner: { value: number; displayValue: string; color?: string; lvl: number; rowIndex: number } | undefined;
   for (let i = 0; i < rowCount; i++) {
     const row = columns.map((column) => column[i]);
     if (!headers.every((header, column) => checkFilter(String(row[column]), settings.filter, header))) {
+      if (capture?.current?.table) {
+        capture.current.table.nextRow = i + 1;
+      }
       continue;
     }
+    const capturedRow = capture?.row(entry, i, row);
     let color: string | undefined;
     let lvl: number | undefined;
     if (thresholdIndex !== undefined) {
@@ -262,17 +307,30 @@ function processTable(
           )
         );
       } else {
-        ({ color, lvl } = getMetricColor(value, data, settings.thresholds, settings.baseColor, context));
+        ({ color, lvl } = getMetricColor(
+          value,
+          data,
+          settings.thresholds,
+          settings.baseColor,
+          context,
+          capturedRow?.color
+        ));
         const displayValue =
           (settings.mapping && getMappingMatch(settings.mapping, value, settings.decimal)) ??
           formatValues(value, settings.unit, settings.decimal);
         row[thresholdIndex] = displayValue;
+        if (capturedRow) {
+          capturedRow.decision = { value, displayValue, color, level: lvl };
+        }
         if (!winner || lvl > winner.lvl) {
           winner = { value, color, lvl, displayValue, rowIndex: table.columnsData.length };
         }
       }
     }
     table.columnsData.push({ row, color, lvl });
+  }
+  if (capture?.current?.table) {
+    capture.current.table.rowFilterStatus = 'applied';
   }
   if (!table.columnsData.length) {
     throw new CalculationError('EMPTY_INPUT', 'После фильтрации в таблице нет строк');

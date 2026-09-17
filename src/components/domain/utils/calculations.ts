@@ -1,4 +1,5 @@
 import { Expr } from 'types';
+import type { CheckTrace, ColorTrace, EvaluationTrace, InputTrace } from 'components/capture/trace';
 import { TimeRange } from '@grafana/data';
 import { DataFrameMap, Diagnostic, EvaluationContext } from '../models';
 import { CalculationError, numericValue, reportCalculationError, reportDiagnostic } from './diagnostics';
@@ -57,7 +58,11 @@ export function getMappingMatch(mapping: ValueMapping[], value: number, decimal?
   return undefined;
 }
 
-export function calculateValue(values: number[], method: CalculationMethod): number {
+export function calculateValue(
+  values: number[],
+  method: CalculationMethod,
+  capture?: { calculation: CalculationMethod | null }
+): number {
   if (values.length === 0) {
     throw new CalculationError('EMPTY_INPUT', 'Нет значений для расчёта');
   }
@@ -83,7 +88,11 @@ export function calculateValue(values: number[], method: CalculationMethod): num
       result = values[values.length - 1] - values[0];
       break;
     default:
+      method = 'last';
       result = values[values.length - 1];
+  }
+  if (capture) {
+    capture.calculation = method;
   }
 
   if (!Number.isFinite(result)) {
@@ -97,41 +106,71 @@ export function getMetricColor(
   dataFrame: DataFrameMap,
   thresholds?: Threshold[],
   baseColor?: string,
-  context: EvaluationContext = { timeTo: Date.now(), diagnostics: [] }
+  context: EvaluationContext = { timeTo: Date.now(), diagnostics: [] },
+  capture?: ColorTrace
 ) {
   let lvl = 0;
   let color = baseColor;
 
   thresholds?.forEach((threshold, index) => {
     const thresholdContext = { ...context, source: { ...context.source, thresholdIndex: index } };
-    if (!threshold || !Number.isFinite(threshold.value) || (threshold.lvl != null && !Number.isFinite(threshold.lvl))) {
-      reportDiagnostic(
-        thresholdContext,
-        'INVALID_THRESHOLD',
-        'Порог должен содержать числовую границу и числовой уровень'
-      );
-      return;
-    }
-    if (threshold.operator && !['<', '>', '<=', '>=', '=', '!='].includes(threshold.operator)) {
-      reportDiagnostic(thresholdContext, 'INVALID_THRESHOLD', 'Неизвестный оператор сравнения порога');
-      return;
-    }
-    if (threshold.condition && !evaluateThresholdCondition(threshold.condition, dataFrame, thresholdContext)) {
-      return;
-    }
+    const start = context.diagnostics.length;
+    const check: CheckTrace | undefined = capture
+      ? {
+          index,
+          condition: threshold?.condition ? 'not_evaluated' : 'not_present',
+          comparison: 'not_evaluated',
+          matched: false,
+          inputs: [],
+          diagnostics: [],
+        }
+      : undefined;
+    try {
+      if (
+        !threshold ||
+        !Number.isFinite(threshold.value) ||
+        (threshold.lvl != null && !Number.isFinite(threshold.lvl))
+      ) {
+        reportDiagnostic(
+          thresholdContext,
+          'INVALID_THRESHOLD',
+          'Порог должен содержать числовую границу и числовой уровень'
+        );
+        return;
+      }
+      if (threshold.operator && !['<', '>', '<=', '>=', '=', '!='].includes(threshold.operator)) {
+        reportDiagnostic(thresholdContext, 'INVALID_THRESHOLD', 'Неизвестный оператор сравнения порога');
+        return;
+      }
+      if (threshold.condition && !evaluateThresholdCondition(threshold.condition, dataFrame, thresholdContext, check)) {
+        return;
+      }
 
-    const comparisonResult = compareValues(value, threshold.value, threshold.operator || '>=');
+      const comparisonResult = compareValues(value, threshold.value, threshold.operator || '>=');
+      if (check) {
+        check.comparison = comparisonResult ? 'true' : 'false';
+        check.matched = comparisonResult;
+      }
 
-    if (comparisonResult) {
-      color = threshold.color;
-      lvl = threshold.lvl ?? index + 1;
+      if (comparisonResult) {
+        color = threshold.color;
+        lvl = threshold.lvl ?? index + 1;
+        if (capture) {
+          capture.selectedThresholdIndex = index;
+        }
+      }
+    } finally {
+      if (check && capture) {
+        check.diagnostics = context.diagnostics.slice(start);
+        capture.checks.push(check);
+      }
     }
   });
 
   return { color, lvl };
 }
 
-export function getMath(expression: string, dataFrame: DataFrameMap) {
+export function getMath(expression: string, dataFrame: DataFrameMap, inputs?: InputTrace[]) {
   const variableRegex =
     /\$([А-Яа-яЁёA-Za-z0-9_]+)(?:\.([А-Яа-яЁёA-Za-z0-9_ -]+))?(?::(last|total|max|min|count|delta))?/g;
 
@@ -143,6 +182,18 @@ export function getMath(expression: string, dataFrame: DataFrameMap) {
         const metricData = dataFrame.get(refId);
         const selected =
           subKey === undefined ? metricData?.values.values().next().value : metricData?.values.get(subKey.trim());
+        const input = inputs
+          ? {
+              token: _match,
+              refId,
+              field: subKey?.trim() ?? metricData?.values.keys().next().value ?? null,
+              calculation: calculationMethod,
+              value: undefined as number | undefined,
+            }
+          : undefined;
+        if (input) {
+          inputs!.push(input);
+        }
         if (!selected) {
           throw new CalculationError('MISSING_INPUT', `Нет данных для ${refId}${subKey ? `.${subKey.trim()}` : ''}`, {
             refId,
@@ -150,6 +201,9 @@ export function getMath(expression: string, dataFrame: DataFrameMap) {
           });
         }
         const value = calculateValue(selected.values.map(numericValue), calculationMethod);
+        if (input) {
+          input.value = value;
+        }
         // Скобки сохраняют смысл отрицательных значений; округление относится только к UI.
         return `(${value})`;
       }
@@ -160,14 +214,15 @@ export function getMath(expression: string, dataFrame: DataFrameMap) {
 export function evaluateThresholdCondition(
   condition: string,
   dataFrame: DataFrameMap,
-  context: EvaluationContext = { timeTo: Date.now(), diagnostics: [] }
+  context: EvaluationContext = { timeTo: Date.now(), diagnostics: [] },
+  capture?: CheckTrace
 ): boolean {
   try {
     const timezone = parseInt(condition.match(/timezone\s*=\s*(-?\d+)/)?.[1] || '3', 10);
     const localTime = new Date(context.timeTo + timezone * 60 * 60 * 1000);
     const sanitizedCondition = condition.replace(/timezone\s*=\s*(-?\d+),?/, '').trim();
 
-    const metricsCondition = getMath(sanitizedCondition, dataFrame);
+    const metricsCondition = getMath(sanitizedCondition, dataFrame, capture?.inputs);
 
     const result = new Function('hour', 'minute', 'day', `return ${metricsCondition}`)(
       localTime.getUTCHours(),
@@ -177,8 +232,14 @@ export function evaluateThresholdCondition(
     if (typeof result !== 'boolean') {
       throw new Error('Ожидалось логическое значение true или false');
     }
+    if (capture) {
+      capture.condition = result ? 'true' : 'false';
+    }
     return result;
   } catch (error) {
+    if (capture) {
+      capture.condition = 'error';
+    }
     reportDiagnostic(
       context,
       'INVALID_CONDITION',
@@ -193,7 +254,8 @@ export async function calculateExpressions(
   expressions: Expr[],
   dataFrame: DataFrameMap,
   timeRange: TimeRange,
-  diagnostics: Diagnostic[] = []
+  diagnostics: Diagnostic[] = [],
+  capture?: EvaluationTrace
 ): Promise<DataFrameMap> {
   if (!expressions.length || !dataFrame) {
     return dataFrame;
@@ -203,9 +265,11 @@ export async function calculateExpressions(
   const meticTime = timeRange.to.valueOf();
 
   for (const expr of expressions) {
+    const expressionCapture = capture?.expression(expr);
+    const diagnosticStart = diagnostics.length;
     if (!enrichedFrame.has(expr.refId) && expr.expression && expr.expression.trim() !== '') {
       try {
-        const math = getMath(expr.expression, enrichedFrame);
+        const math = getMath(expr.expression, enrichedFrame, expressionCapture?.inputs);
         if (math && math.length > 0) {
           const result = Function('"use strict";return (' + math + ')')();
           if (typeof result !== 'number' || !Number.isFinite(result)) {
@@ -214,10 +278,20 @@ export async function calculateExpressions(
           enrichedFrame.set(expr.refId, {
             values: new Map([[expr.refId, { values: [String(result)], timestamps: [meticTime] }]]),
           });
+          if (expressionCapture) {
+            expressionCapture.value = result;
+          }
         }
       } catch (error) {
         reportCalculationError({ timeTo: meticTime, diagnostics, source: { expressionRefId: expr.refId } }, error);
       }
+    } else if (expressionCapture) {
+      expressionCapture.skipped = enrichedFrame.has(expr.refId)
+        ? 'Формула не выполнялась: refId уже существует'
+        : 'Формула не выполнялась: пустое выражение';
+    }
+    if (expressionCapture) {
+      expressionCapture.diagnostics = diagnostics.slice(diagnosticStart);
     }
   }
 

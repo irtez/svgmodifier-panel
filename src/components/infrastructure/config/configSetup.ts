@@ -1,4 +1,5 @@
 import { applySchema, parseFilter } from './parsers';
+import type { EvaluationTrace } from 'components/capture/trace';
 import { RegexCheck } from 'components/domain/utils/common';
 import { processLegacyMetric } from 'components/domain/utils/calculations';
 import {
@@ -19,7 +20,11 @@ export interface PreparedPanelConfig {
   diagnostics?: Diagnostic[];
 }
 
-export function initializeConfig(svg: Document | null, config: ConfigRules[] | null): PreparedPanelConfig {
+export function initializeConfig(
+  svg: Document | null,
+  config: ConfigRules[] | null,
+  capture?: EvaluationTrace
+): PreparedPanelConfig {
   const rulesByElementId: RulesByElementId = new Map();
   const elementsById = new Map<string, SVGElement>();
   const diagnostics: Diagnostic[] = [];
@@ -34,7 +39,7 @@ export function initializeConfig(svg: Document | null, config: ConfigRules[] | n
   }
 
   if (config) {
-    prepareConfig(config, elementsById, rulesByElementId, requireElement, diagnostics);
+    prepareConfig(config, elementsById, rulesByElementId, requireElement, diagnostics, capture);
   }
 
   return { rulesByElementId, elementsById, diagnostics };
@@ -45,7 +50,8 @@ function prepareConfig(
   elementsById: Map<string, SVGElement>,
   rulesByElementId: RulesByElementId,
   requireElement: boolean,
-  diagnostics: Diagnostic[]
+  diagnostics: Diagnostic[],
+  capture?: EvaluationTrace
 ) {
   const getRuleConfig = (rule: ConfigRules) => {
     const config = rule.attributes;
@@ -125,6 +131,7 @@ function prepareConfig(
         elemIndex: currentIndex,
         elemsLength: selector.length !== 0 ? 1 : elemsLength,
       };
+      capture?.preparedRule(rule, preparedRule, id);
 
       if (selector.length === 0) {
         currentIndex++;
