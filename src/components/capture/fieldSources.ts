@@ -23,6 +23,11 @@ export type FieldDataSourceOrigin = { uid?: unknown; type?: unknown; name?: unkn
 export class FieldSources {
   private readonly origins = new WeakMap<ExtractedField, FieldOrigin>();
 
+  /** Чтение дополнительных metadata тоже находится внутри границы capture. */
+  readDataSource(read: () => FieldDataSourceOrigin | undefined): FieldDataSourceOrigin | undefined {
+    return read();
+  }
+
   recordField(
     extracted: ExtractedField,
     frame: DataFrame,

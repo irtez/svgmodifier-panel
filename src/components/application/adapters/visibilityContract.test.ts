@@ -43,6 +43,7 @@ it('[L08,L09] grid и notify сохраняют отбор по lvl, незав�
   expect(grid.dataSourceMap?.get('Synthetic')).toEqual(new Set(['B'])); // Таблицы по-прежнему не входят в notify.
   const timeRange = { from: dateTime(0), to: dateTime(1), raw: { from: 'now-3h', to: 'now' } };
   const processed = {
+    inputKey: {},
     ...grid,
     evaluation,
     timeRange,

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo, useLayoutEffect, type RefObject } from 'react';
 import { LoadingState, PanelData, TimeRange } from '@grafana/data';
 import { PanelOptions } from 'types';
 
@@ -15,8 +15,13 @@ import { extractFields } from 'components/infrastructure/data/dataExtractor';
 
 import { configureLogger, logger } from 'shared/logger/logger';
 import { EMPTY_DS_MAP } from 'shared/constants';
+import type { CaptureConnection, CaptureTicket, CaptureRuntime } from 'components/capture/session';
+import type { CapturePublication } from 'components/capture/runtime';
+import type { EvaluationTrace } from 'components/capture/trace';
 
 export interface ProcessedData {
+  inputKey: object;
+  capture?: CapturePublication;
   generation: number;
   timeRange: TimeRange;
   evaluation: PanelEvaluation;
@@ -27,8 +32,14 @@ export interface ProcessedData {
   operations: Array<() => void> | undefined;
 }
 
-export const usePanelData = (data: PanelData, timeRange: TimeRange, options: PanelOptions) => {
+export const usePanelData = (
+  data: PanelData,
+  timeRange: TimeRange,
+  options: PanelOptions,
+  capture?: RefObject<CaptureConnection | null>
+) => {
   const generationRef = useRef(0);
+  const captureRun = useRef<CaptureTicket>();
 
   const [isLoading, setIsLoading] = useState(false);
   const [processedData, setProcessedData] = useState<ProcessedData | null>(null);
@@ -76,6 +87,8 @@ export const usePanelData = (data: PanelData, timeRange: TimeRange, options: Pan
       return null;
     }
   }, [mode, svgCode, svgAspectRatio]);
+  // После mount корень перенесён из XML Document в DOM; сохраняем его для нового YAML.
+  const svgRoot = useMemo(() => svgDoc?.documentElement ?? null, [svgDoc]);
 
   const preparedConfig = useMemo<PreparedPanelConfig>(() => {
     if (mode === 'svg' && !svgDoc) {
@@ -87,27 +100,125 @@ export const usePanelData = (data: PanelData, timeRange: TimeRange, options: Pan
         ],
       };
     }
-    return initializeConfig(svgDoc, mappingArray);
-  }, [mode, svgDoc, mappingArray]);
+    return initializeConfig(svgRoot, mappingArray);
+  }, [mode, svgDoc, svgRoot, mappingArray]);
 
   const transformationsExpressions = options.transformations.expressions;
+  const inputKey = useMemo(
+    () => ({
+      token: {},
+      svgCode,
+      svgDoc,
+      mappingArray,
+      mode,
+      data,
+      timeRange,
+      parsedConfig,
+      preparedConfig,
+      customTimeSettings,
+      calculateOptions,
+      notifyShow,
+      transformationsExpressions,
+      capture,
+    }),
+    [
+      svgCode,
+      svgDoc,
+      mappingArray,
+      mode,
+      data,
+      timeRange,
+      parsedConfig,
+      preparedConfig,
+      customTimeSettings,
+      calculateOptions,
+      notifyShow,
+      transformationsExpressions,
+      capture,
+    ]
+  );
+
+  useLayoutEffect(() => {
+    const generation = ++generationRef.current;
+    captureRun.current = capture?.current?.begin({
+      effectiveFromMs: timeRange.from.valueOf(),
+      effectiveToMs: timeRange.to.valueOf(),
+    });
+    return () => {
+      generationRef.current = generation + 1;
+    };
+  }, [inputKey, capture, timeRange]);
 
   useEffect(() => {
-    const generation = ++generationRef.current;
+    const generation = generationRef.current;
+    const ticket = captureRun.current;
     const isCurrent = () => generationRef.current === generation;
     setIsLoading(true);
-    const cleanup = () => {
-      generationRef.current++;
-    };
 
     // Grafana может передать предыдущие series, пока следующий запрос ещё выполняется.
     if (data.state === LoadingState.Loading || data.state === LoadingState.NotStarted) {
-      return cleanup;
+      return;
     }
 
     const process = async () => {
       const diagnostics: Diagnostic[] = [...parsedConfig.diagnostics, ...(preparedConfig.diagnostics ?? [])];
       let queriesData: DataFrameMap = new Map();
+      let runtime: CaptureRuntime | null = null;
+      let trace: EvaluationTrace | undefined;
+      let failed = false;
+      if (ticket) {
+        if (data.state !== LoadingState.Done && data.state !== LoadingState.Error) {
+          ticket.fail('CAPTURE_DATA_STATE_UNSUPPORTED');
+        } else {
+          runtime = await ticket.load();
+          if (!isCurrent()) {
+            return;
+          }
+          if (runtime) {
+            try {
+              trace = runtime.createTrace(mappingArray, preparedConfig, () => ticket.fail());
+            } catch {
+              ticket.fail();
+              runtime = null;
+            }
+          }
+        }
+      }
+      const publication = (evaluation: PanelEvaluation): CapturePublication | undefined => {
+        if (!runtime || !trace || !ticket?.current()) {
+          return undefined;
+        }
+        try {
+          return runtime.createPublication(
+            ticket,
+            {
+              trace,
+              evaluation,
+              producerVersion: ticket.connection.producerVersion,
+              panel: { id: ticket.connection.panelId, title: null, mode },
+              observed: {
+                dataState: data.state as 'Done' | 'Error',
+                effectiveFromMs: timeRange.from.valueOf(),
+                effectiveToMs: timeRange.to.valueOf(),
+                evaluatedAtMs: Date.now(),
+              },
+              evaluationStatus: failed
+                ? 'failed'
+                : parsedConfig.status === 'invalid' || (mode === 'svg' && !svgDoc)
+                ? 'invalid_configuration'
+                : 'evaluated',
+              configuration: {
+                yamlStatus: parsedConfig.status,
+                svgStatus: mode !== 'svg' ? 'not_evaluated' : !svgCode ? 'empty' : svgDoc ? 'ready' : 'invalid',
+              },
+            },
+            svgCode ?? ''
+          );
+        } catch {
+          ticket.fail();
+          return undefined;
+        }
+      };
       try {
         const errors = data.errors?.length ? data.errors : data.error ? [data.error] : [];
         const failedRefs = new Set(errors.map((error) => error.refId).filter(Boolean));
@@ -128,7 +239,7 @@ export const usePanelData = (data: PanelData, timeRange: TimeRange, options: Pan
           ...data,
           series: unknownFailure ? [] : data.series.filter((frame) => !failedRefs.has(frame.refId)),
         };
-        const rawQueriesData = await extractFields(currentData, customTimeSettings, timeRange);
+        const rawQueriesData = await extractFields(currentData, customTimeSettings, timeRange, trace);
         if (!isCurrent()) {
           return;
         }
@@ -148,8 +259,15 @@ export const usePanelData = (data: PanelData, timeRange: TimeRange, options: Pan
         if (!isCurrent()) {
           return;
         }
-        queriesData = await calculateExpressions(transformationsExpressions, rawQueriesData, timeRange, diagnostics);
+        queriesData = await calculateExpressions(
+          transformationsExpressions,
+          rawQueriesData,
+          timeRange,
+          diagnostics,
+          trace
+        );
       } catch (error) {
+        failed = true;
         diagnostics.push({
           code: 'CALCULATION_ERROR',
           severity: 'error',
@@ -161,13 +279,20 @@ export const usePanelData = (data: PanelData, timeRange: TimeRange, options: Pan
         return;
       }
       try {
-        const evaluation = evaluatePanel(preparedConfig.rulesByElementId, queriesData, {
-          timeTo: timeRange.to.valueOf(),
-          diagnostics,
-        });
+        const evaluation = evaluatePanel(
+          preparedConfig.rulesByElementId,
+          queriesData,
+          {
+            timeTo: timeRange.to.valueOf(),
+            diagnostics,
+          },
+          trace
+        );
         const result = buildPanelPresentation(evaluation, preparedConfig.elementsById, calculateOptions);
         if (isCurrent()) {
           setProcessedData({
+            inputKey: inputKey.token,
+            capture: publication(evaluation),
             generation,
             timeRange,
             evaluation,
@@ -179,6 +304,7 @@ export const usePanelData = (data: PanelData, timeRange: TimeRange, options: Pan
           });
         }
       } catch (err) {
+        failed = true;
         // Даже непредусмотренная ошибка не оставляет старый успех текущим результатом.
         diagnostics.push({
           code: 'EVALUATION_ERROR',
@@ -188,6 +314,8 @@ export const usePanelData = (data: PanelData, timeRange: TimeRange, options: Pan
         const evaluation: PanelEvaluation = { elements: [], diagnostics };
         const reset = buildPanelPresentation(evaluation, preparedConfig.elementsById, calculateOptions);
         setProcessedData({
+          inputKey: inputKey.token,
+          capture: publication(evaluation),
           generation,
           timeRange,
           evaluation,
@@ -205,7 +333,6 @@ export const usePanelData = (data: PanelData, timeRange: TimeRange, options: Pan
     };
 
     process();
-    return cleanup;
   }, [
     data,
     timeRange,
@@ -215,6 +342,11 @@ export const usePanelData = (data: PanelData, timeRange: TimeRange, options: Pan
     calculateOptions,
     notifyShow,
     transformationsExpressions,
+    inputKey,
+    mappingArray,
+    mode,
+    svgCode,
+    svgDoc,
   ]);
 
   return {
@@ -223,5 +355,6 @@ export const usePanelData = (data: PanelData, timeRange: TimeRange, options: Pan
     svgDoc,
     preparedConfig,
     mappingArray,
+    isCurrentResult: processedData?.inputKey === inputKey.token,
   };
 };

@@ -21,7 +21,7 @@ export interface PreparedPanelConfig {
 }
 
 export function initializeConfig(
-  svg: Document | null,
+  svg: Document | Element | null,
   config: ConfigRules[] | null,
   capture?: EvaluationTrace
 ): PreparedPanelConfig {
@@ -32,7 +32,10 @@ export function initializeConfig(
   const requireElement = svg !== null;
 
   if (svg) {
-    const elements = svg.querySelectorAll<SVGElement>('[id^="cell"]');
+    const elements = Array.from(svg.querySelectorAll<SVGElement>('[id^="cell"]'));
+    if (svg.nodeType === 1 && (svg as Element).matches('[id^="cell"]')) {
+      elements.unshift(svg as SVGElement);
+    }
     for (const el of elements) {
       el.id && elementsById.set(el.id, el);
     }

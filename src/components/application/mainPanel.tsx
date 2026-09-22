@@ -14,11 +14,11 @@ const UpdatingNotice = () => {
   ) : null;
 };
 
-const Panel: React.FC<PanelProps<PanelOptions>> = ({ data, timeRange, options, height, width }) => {
+const Panel: React.FC<PanelProps<PanelOptions>> = ({ id, data, timeRange, options, height, width }) => {
   const mode = options.displayMode || 'svg';
 
   return (
-    <PanelProvider data={data} timeRange={timeRange} options={options}>
+    <PanelProvider panelId={id} width={width} height={height} data={data} timeRange={timeRange} options={options}>
       <div style={{ position: 'relative', height, width, overflow: 'hidden' }}>
         {mode === 'svg' && <SvgModePanel height={height} width={width} />}
         {mode === 'grid' && <GridPanel height={height} width={width} />}

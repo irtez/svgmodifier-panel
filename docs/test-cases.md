@@ -181,7 +181,7 @@
 настоящие parser → preparation → extraction → expressions → evaluator →
 presentation. Каждый обычный сценарий сравнивает **весь** результат расчёта и
 представления capture-off/on, затем проверяет снимок schema/reference validator.
-Факты SVG проверяются отдельно ниже; browser session ещё не подключена.
+Факты SVG и browser session проверяются отдельно ниже.
 
 | ID | Вход | Ожидаемое поведение |
 | --- | --- | --- |
@@ -290,6 +290,102 @@ Unit-проверки находятся в [diagram.test.ts](../src/components/
 | M17 | Точная граница распакованных байтов и один лишний байт | Граница принимается; превышение отклоняется |
 | M18 | DTD после распаковки | Запрещён до XML-парсинга модели |
 | M19 | Слишком много cells после распаковки | limited без частичных отношений |
+
+## Session и публикация после обновления UI
+
+[session.test.ts](../src/components/capture/session.test.ts) проверяет границу hook,
+[useCaptureSession.test.tsx](../src/components/capture/useCaptureSession.test.tsx) —
+настоящие hooks, расчёт, snapshot и SVG-операции. Layout/замену SVG-текста
+подтверждают браузерные B-проверки: jsdom для этого недостаточно.
+
+| ID | Вход | Ожидаемое поведение |
+| --- | --- | --- |
+| S01 | Hook отсутствует или отказывает | Нет загрузки runtime |
+| S02 | Новое begin до окончания старого run | Старый ticket не загружает runtime и не вызывает фабрику; времена/поколения раздельны |
+| S03 | Unmount во время import и новый instance | Старый результат не оживает, close однократен, instance ID новый |
+| S04 | Getter/connect, неверный протокол, лимит или метод | Подключение изолировано, тяжёлый runtime не загружается |
+| S05 | Исключение begin/publish/fail/close | Ошибка не выходит в UI, приватный текст не передаётся |
+| S06 | Ошибка lazy import | CAPTURE_EXPORT_FAILED, без невалидного результата |
+| S07 | Receiver сохраняет factory и вызывает позже | Асинхронный вызов после возврата publish не выполняет exporter |
+| S08 | Обычные данные и принятие session | Полный валидный snapshot того же расчёта, исходное имя поля и применённый цвет |
+| S09 | Done → Loading/NotStarted → новый Done | Старый terminal сразу инвалидирован, старые frames не публикуются |
+| S10 | Grid, сломанный YAML/SVG, datasource Error | Диагностический terminal без ожидания SVG; status и полезные факты сохранены |
+| S11 | Streaming | CAPTURE_DATA_STATE_UNSUPPORTED, UI продолжает обновляться |
+| S12 | Новый YAML после переноса SVG в DOM | Новая конфигурация использует существующие элементы, цвет обновляется |
+| S13 | StrictMode и unmount/remount | SVG монтируется повторно, старый handle закрывается |
+| S14 | Resize со строгим receiver | Новое поколение принято, формула исполнялась один раз |
+| S15 | Getter принятого handle бросает исключение | Handle закрыт; следующее подключение не становится ambiguous |
+| S16 | Меняется только panel ID | Новый instance начинает run даже при тех же объектах входных данных |
+| S17 | Recorder бросает в recordField/beginRule | Capture завершается ошибкой, UI сохраняет значение и цвет |
+| S18 | Ошибочный getter дополнительных request metadata | Ошибка экспорта не отменяет успешную метрику |
+| S19 | SVG меняется в grid | Новое поколение содержит новые authored-подписи, не старый рисунок |
+
+## Защита вычислений от ошибок recorder
+
+[guardTrace.test.ts](../src/components/capture/guardTrace.test.ts) сравнивает
+настоящие extraction/evaluator/presentation с capture-off и считает исполнения
+формул/условий. Guard находится в lazy chunk, не в обычном UI.
+
+| ID | Вход | Ожидаемое поведение |
+| --- | --- | --- |
+| TG01 | Сбои recorder-методов, включая вложенный getOrigin | Данные, решения, presentation и число вычислений совпадают с baseline |
+| TG02 | Настоящие recorder и отделённые методы | Identity данных и правильный this сохранены |
+| TG03 | Первый сбой и исключение callback | Callback однократен; все recorder далее возвращают undefined |
+| TG04 | Повторно возвращённый дочерний recorder | Однократное оборачивание, обычные данные не меняются |
+
+## Ограниченный тестовый browser receiver
+
+[receiver.test.ts](../src/components/capture/testing/receiver.test.ts)
+проверяет протокол и отделённую копию payload. Это не production renderer.
+
+| ID | Вход | Ожидаемое поведение |
+| --- | --- | --- |
+| R01 | Валидный снимок, последующая мутация источника | Immutable-копия с согласованными identity/generation |
+| R02 | Чужая панель, неверная identity, getter | Подключение отклонено без чтения getter |
+| R03 | Новое поколение, поздний publish, close/dispose | Старый результат очищен, устаревшая фабрика не вызывается |
+| R04 | Два живых instance, включая одинаковый ID | AMBIGUOUS; восстановление только после нового begin |
+| R05 | begin/close внутри фабрики | Старый publish не изменяет новое состояние |
+| R06 | Исключение фабрики, устаревший fail, Streaming fail | Безопасный код только текущего run |
+| R07 | Подмена kind/version/producer/panel/observed | PAYLOAD_INVALID без снимка |
+| R08 | Неразрешимая ссылка при schema/reference validation | PAYLOAD_INVALID |
+| R09 | Не-JSON значения, нестандартные объекты, циклы | Отказ без преобразования или пропуска данных |
+| R10 | Getter или функция toJSON в payload | Отказ без их выполнения |
+| R11 | UTF-8, escapes, пары и одиночные surrogates | Точный байтовый лимит, без усечения |
+| R12 | Огромная строка | Ранний отказ до сериализации и валидации |
+| R13 | Глубокий или широкий компактный JSON | Ограничение глубины и обхода |
+| R14 | null-prototype, __proto__, общие ссылки | Значения сохранены без prototype pollution |
+| R15 | Две установки receiver | Изоляция состояния; dispose удаляет собственный hook |
+| R16 | Неверное generation до begin | Фабрика не вызывается |
+| R17 | Новый begin внутри validator | Новое pending-состояние сохраняется |
+| R18 | fail после успеха текущего run | Успех заменён безопасной ошибкой |
+| R19 | fail внутри фабрики того же run | Возвращённый payload не перезаписывает ошибку |
+| R20 | Исключение validator, getter сообщения fail | Getter не читается, исходная ошибка не раскрывается |
+| R21 | Большой массив с ловушкой ownKeys | TOO_LARGE по длине до перечисления ключей |
+| R22 | Обычное JSON-поле toJSON | Имя поля не меняет и не удаляет авторские данные |
+
+## Browser acceptance плагина в Grafana
+
+[plugin-capture.browser.cjs](../tests/capture/plugin-capture.browser.cjs),
+`GRAFANA_URL=… npm run test:capture:plugin`. Требует отдельный тестовый экземпляр
+Grafana с собранным плагином. Создаёт и удаляет собственные синтетические ресурсы;
+запросы данных получают фиксированные ответы. Протокол renderer здесь не участвует.
+
+| ID | Вход | Ожидаемое поведение |
+| --- | --- | --- |
+| B01 | Обычный просмотр без hook | Правильные live подпись/цвет, нет загрузки capture chunk |
+| B02 | Принятый hook | Полный валидный снимок после SVG update: raw имена, authored/live текст и фактический fill |
+| B03 | Resize с формулой | Новые bounds/generation, число исполнений формулы не изменилось |
+| B04 | Grid | Terminal snapshot без скрытого SVG-render |
+| B05 | Сломанный YAML | invalid_configuration и диагностика вместо таймаута |
+| B06 | Сломанный SVG | invalid_configuration и invalid diagram |
+| B07 | Ошибка запроса | Error/unavailable и причина, не старое успешное число |
+| B08 | Метрика отсутствует | noData/диагностика и серый UI |
+| B09 | Hook отказал | UI работает, тяжёлый chunk не загружается |
+| B10 | Getter hook бросает | UI работает без page errors |
+| B11 | Connect бросает | UI работает без page errors |
+| B12 | Publish бросает | UI сохраняет подпись/цвет, есть вызов fail |
+| B13 | Capture chunk не загрузился | UI работает, CAPTURE_EXPORT_FAILED |
+| B14 | Снимок больше лимита receiver | TOO_LARGE, без частичного payload, UI продолжает работать |
 
 ## Распределение autoConfig
 

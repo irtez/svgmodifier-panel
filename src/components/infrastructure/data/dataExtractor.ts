@@ -24,7 +24,7 @@ export async function extractFields(
     const visualType = meta?.preferredVisualisationType;
     const CustomRangeTime = timeSettings?.fields?.get(refId) || timeSettings?.global;
     // request нужен только capture-пути; обычное извлечение его даже не читает.
-    const dataSourceOrigin = capture ? getUnambiguousDataSource(panelData, refId) : undefined;
+    const dataSourceOrigin = capture?.readDataSource(() => getUnambiguousDataSource(panelData, refId));
 
     const timeField = fields.find((field) => field.type === FieldType.time);
     const valueFields = fields.filter((field) => field.type === FieldType.number);
