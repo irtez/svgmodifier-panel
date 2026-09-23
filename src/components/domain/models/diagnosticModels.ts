@@ -16,6 +16,8 @@ export interface Diagnostic {
   message: string;
   source?: DiagnosticSource;
   elementIds?: string[];
+  /** Подтверждённые причины в текущем расчёте; presentation их читает, не удаляет. */
+  causes?: Diagnostic[];
 }
 
 /** Контекст одного расчёта; время и сообщения не разделяются между панелями. */
@@ -24,4 +26,5 @@ export interface EvaluationContext {
   diagnostics: Diagnostic[];
   source?: DiagnosticSource;
   elementIds?: string[];
+  inputDiagnostics?: Diagnostic[];
 }

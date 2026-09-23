@@ -241,6 +241,17 @@ function isMetrics(value: unknown): value is Metrics | Metrics[] {
 }
 
 function validateRule(rule: ConfigRules, diagnostics: Diagnostic[]): void {
+  const hideNoDataWarnings = rule.attributes.tooltip?.hideNoDataWarnings;
+  if (hideNoDataWarnings !== undefined && typeof hideNoDataWarnings !== 'boolean') {
+    diagnostics.push(
+      diagnostic(
+        'INVALID_TOOLTIP_SETTING',
+        'tooltip.hideNoDataWarnings должен быть true или false',
+        'warning',
+        rule.source
+      )
+    );
+  }
   const metrics = rule.attributes.metrics;
   const metricList = Array.isArray(metrics) ? metrics : metrics ? [metrics] : [];
   metricList.forEach((metric, metricIndex) => {

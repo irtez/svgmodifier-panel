@@ -37,6 +37,7 @@ export interface Styles {
 
 export interface Tooltip {
   show: boolean;
+  hideNoDataWarnings?: boolean;
   textAbove?: string;
   textBelow?: string;
 }

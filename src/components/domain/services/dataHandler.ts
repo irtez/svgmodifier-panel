@@ -4,7 +4,7 @@ import { getConfig } from 'components/infrastructure/config/configBuilder';
 import { resolveFilterDates } from 'components/infrastructure/config/parsers';
 import { formatValues } from '../utils/valueTransformer';
 import { getMappingMatch, calculateValue, getMetricColor, checkFilter } from '../utils/calculations';
-import { CalculationError, numericValue, reportCalculationError } from '../utils/diagnostics';
+import { CalculationError, inputFailures, numericValue, reportCalculationError } from '../utils/diagnostics';
 import {
   DataFrameEntry,
   DataFrameMap,
@@ -35,6 +35,13 @@ export interface QueriesArray {
 type Settings = ReturnType<typeof getConfig>;
 type FieldResult = { legend: string; refId: string; value?: number; diagnostics: Diagnostic[] };
 
+// Источник может вернуть данные вместе с ошибкой: сохраняем и число, и сообщение.
+function availableInputDiagnostics(refId: string, context: EvaluationContext): Diagnostic[] {
+  return inputFailures(refId, context.inputDiagnostics)
+    .filter((diagnostic) => diagnostic.code === 'QUERY_ERROR')
+    .map((diagnostic) => ({ ...diagnostic, elementIds: context.elementIds }));
+}
+
 export function getMetricsData(
   metrics: Metrics[],
   data: DataFrameMap,
@@ -59,6 +66,7 @@ export function getMetricsData(
         const ctx: EvaluationContext = {
           ...context,
           diagnostics: [],
+          inputDiagnostics: context.inputDiagnostics ?? context.diagnostics,
           source: { ...context.source, refId: selection.refid, legend: selection.legend },
         };
         const start = result.slots!.length;
@@ -134,7 +142,7 @@ function processQuery(
       }
       const fieldContext = {
         ...context,
-        diagnostics: [] as Diagnostic[],
+        diagnostics: availableInputDiagnostics(refId, context),
         source: { ...context.source, refId, legend },
       };
       let value: number | undefined;
@@ -154,9 +162,15 @@ function processQuery(
   if (query.refid) {
     const entry = data.get(query.refid);
     if (!entry) {
-      throw new CalculationError('MISSING_INPUT', `Нет данных по запросу ${query.refid}`);
+      throw new CalculationError(
+        'MISSING_INPUT',
+        `Нет данных по запросу ${query.refid}`,
+        undefined,
+        inputFailures(query.refid, context.inputDiagnostics)
+      );
     }
     if (entry.type === 'table') {
+      context.diagnostics.push(...availableInputDiagnostics(query.refid, context));
       capture?.table(entry, query.refid);
       const table = processTable(entry, data, settings, counter, query.refid, context, capture);
       addCandidate(result, table, context.diagnostics, capture);
@@ -190,7 +204,7 @@ function processQuery(
     if (!Number.isFinite(total)) {
       throw new CalculationError('NON_FINITE_VALUE', 'Сумма не вернула конечное число');
     }
-    addField({ legend: settings.sum, refId: '', value: total, diagnostics: [] }, 0);
+    addField({ legend: settings.sum, refId: '', value: total, diagnostics: failures }, 0);
     return;
   }
   fields.forEach(addField);
@@ -286,7 +300,9 @@ function processTable(
   }
   let winner: { value: number; displayValue: string; color?: string; lvl: number; rowIndex: number } | undefined;
   for (let i = 0; i < rowCount; i++) {
-    const row = columns.map((column) => column[i]);
+    const rawRow = columns.map((column) => column[i]);
+    // Сохраняем прежний текст таблицы; числовая проверка читает исходный пропуск.
+    const row = rawRow.map(String);
     if (!headers.every((header, column) => checkFilter(String(row[column]), settings.filter, header))) {
       if (capture?.current?.table) {
         capture.current.table.nextRow = i + 1;
@@ -297,13 +313,15 @@ function processTable(
     let color: string | undefined;
     let lvl: number | undefined;
     if (thresholdIndex !== undefined) {
-      const value = numericValue(row[thresholdIndex]);
-      if (!Number.isFinite(value)) {
+      const value = numericValue(rawRow[thresholdIndex]);
+      if (value === null || !Number.isFinite(value)) {
         reportCalculationError(
           context,
           new CalculationError(
-            'NON_FINITE_VALUE',
-            `Строка ${i + 1}: значение ${headers[thresholdIndex]} не является конечным числом`
+            value === null ? 'MISSING_VALUE' : 'NON_FINITE_VALUE',
+            value === null
+              ? `Строка ${i + 1}: нет значения ${headers[thresholdIndex]}`
+              : `Строка ${i + 1}: значение ${headers[thresholdIndex]} не является конечным числом`
           )
         );
       } else {
@@ -337,7 +355,12 @@ function processTable(
   }
   if (thresholdIndex !== undefined && !winner) {
     // Ошибки строк уже объясняют причину; общий результат таблицы отсутствует.
-    throw new CalculationError('EMPTY_INPUT', 'В выбранной колонке нет пригодных значений');
+    throw new CalculationError(
+      'EMPTY_INPUT',
+      'В выбранной колонке нет пригодных значений',
+      undefined,
+      context.diagnostics.slice()
+    );
   }
   if (winner) {
     table.metricValue = winner.value;

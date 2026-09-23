@@ -1,7 +1,7 @@
 import { FieldType, getFieldDisplayName, type DataFrame, type PanelData, type TimeRange } from '@grafana/data';
 
 import { FieldsTimeSettings, getFieldTimeRange } from 'components/domain/utils/timeSettings';
-import { DataFrameMap } from 'components/domain/models';
+import { DataFrameMap, ExtractedField } from 'components/domain/models';
 import type { FieldSources } from 'components/capture/fieldSources';
 
 export async function extractFields(
@@ -34,7 +34,7 @@ export async function extractFields(
       }
 
       for (const valueField of valueFields) {
-        let values = valueField?.values.map(String);
+        let values = valueField.values.map(inputValue);
         let timestamps = timeField?.values.map(Number) || [];
         const fieldDisplayName = getFieldDisplayName(valueField, frame, dataFrame);
 
@@ -55,7 +55,7 @@ export async function extractFields(
         continue;
       }
 
-      const values = field.values.map(String);
+      const values = field.values.map(inputValue);
       const Length = values.length;
       const fieldDisplayName = getFieldDisplayName(field, frame, dataFrame);
 
@@ -85,10 +85,13 @@ function getUnambiguousDataSource(panelData: PanelData, refId: string) {
   return datasource ?? undefined;
 }
 
+// Пропуск не превращаем в строку: иначе его нельзя отличить от неверного числа.
+const inputValue = (value: unknown): string | null | undefined => (value == null ? value : String(value));
+
 function addToMap(
   refId: string,
   valueMap: DataFrameMap,
-  values: string[],
+  values: ExtractedField['values'],
   displayName: string,
   timestamps?: number[],
   type?: string,

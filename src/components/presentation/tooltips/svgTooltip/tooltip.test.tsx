@@ -21,6 +21,36 @@ const missing: TooltipContent = {
   ],
 };
 
+it('[N20] предупреждения и общий no-data компактнее метрик и авторского текста', () => {
+  const host = document.createElement('div');
+  host.innerHTML = '<svg><g id="cell-a"><rect /></g></svg>';
+  document.body.append(host);
+  const content: TooltipContent = {
+    ...missing,
+    textAbove: 'Авторская подпись',
+    queryData: [{ label: 'Synthetic metric', metric: '95', color: 'red' }],
+    diagnostics: [
+      ...missing.diagnostics!,
+      { code: 'INVALID_CONDITION', severity: 'error', message: 'Synthetic condition error' },
+    ],
+  };
+  render(
+    <Tooltip containerRef={{ current: host }} tooltipContent={[content]} options={options} timeRange={timeRange} />
+  );
+  fireEvent.mouseOver(host.querySelector('rect')!);
+  const assertSizes = () => {
+    expect(screen.getByText('Нет данных для определения состояния')).toHaveStyle({ fontSize: '12px' });
+    expect(screen.getByText('Нет данных по запросу A').closest('ul')).toHaveStyle({ fontSize: '12px' });
+    expect(screen.getByText('Synthetic condition error').closest('ul')).toHaveStyle({ fontSize: '12px' });
+    expect(screen.getByText('Авторская подпись')).toHaveStyle({ fontSize: '13px' });
+    expect(screen.getByText('95')).toHaveStyle({ fontSize: '13px' });
+  };
+  assertSizes();
+  fireEvent.contextMenu(host.querySelector('rect')!);
+  assertSizes();
+  host.remove();
+});
+
 it('[U04] hideZeros не скрывает сообщения и не изменяет исходный результат', () => {
   const input: TooltipContent = { ...missing, queryData: [{ label: 'zero', metric: '0', color: 'green' }] };
   const processed = processTooltipContent(input, options)!;

@@ -55,12 +55,12 @@ export function getCustomTimeSettings(relativeTime?: string, fieldsRelativeTime?
   return timeSettings;
 }
 
-export function getFieldTimeRange(
+export function getFieldTimeRange<T>(
   timestamps: number[],
-  values: string[],
+  values: T[],
   relativeTime: string,
   timeRange: TimeRange
-): { timestamps: number[]; values: string[] } {
+): { timestamps: number[]; values: T[] } {
   const unit = relativeTime.slice(-1);
   const value = parseInt(relativeTime.slice(0, -1), 10);
 

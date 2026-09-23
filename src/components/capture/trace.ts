@@ -3,6 +3,7 @@ import type {
   ConfigRules,
   DataFrameEntry,
   Diagnostic,
+  ExtractedField,
   PreparedRule,
   QueryType,
 } from '../domain/models';
@@ -13,7 +14,6 @@ import type { ThresholdCheck } from './models';
 import { FieldSources } from './fieldSources';
 import { copyJson } from './jsonValues';
 
-export type ExtractedField = { values: string[]; timestamps?: number[] };
 export interface InputTrace {
   token: string;
   refId: string;

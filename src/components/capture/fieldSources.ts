@@ -1,4 +1,5 @@
 import type { DataFrame, Field } from '@grafana/data';
+import type { ExtractedField } from '../domain/models';
 
 export interface FieldOrigin {
   fieldName: string;
@@ -16,7 +17,6 @@ export interface FieldOrigin {
   rawValues?: readonly unknown[];
 }
 
-type ExtractedField = { values: string[]; timestamps?: number[] };
 export type FieldDataSourceOrigin = { uid?: unknown; type?: unknown; name?: unknown };
 
 /** Capture-only индекс происхождения, не изменяющий рабочую модель данных. */

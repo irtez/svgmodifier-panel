@@ -27,6 +27,26 @@ const fixtureYaml =
   '        thresholds: [{value: 80, color: red, lvl: 2}]';
 
 function options(kind) {
+  const warnings = kind.startsWith('warnings-');
+  const warningYaml = JSON.stringify({
+    changes: [
+      {
+        id: 'a',
+        attributes: {
+          label: 'replace',
+          tooltip: { show: true, hideNoDataWarnings: kind !== 'warnings-visible', textAbove: 'Synthetic note' },
+          metrics: {
+            queries:
+              kind === 'warnings-mixed'
+                ? [{ refid: 'A' }, { refid: 'MISSING' }, { refid: 'F' }]
+                : [{ refid: 'MISSING' }, { refid: 'B' }],
+            baseColor: 'green',
+            thresholds: [{ value: 80, color: 'red', lvl: 2 }],
+          },
+        },
+      },
+    ],
+  });
   return {
     displayMode: kind === 'grid' ? 'grid' : 'svg',
     grid: { columnMode: 'auto' },
@@ -36,12 +56,13 @@ function options(kind) {
       metricsMapping: [
         {
           page: 'Synthetic',
-          code:
-            kind === 'yaml'
-              ? 'changes: ['
-              : kind === 'missing'
-              ? fixtureYaml.replace('refid: A', 'refid: MISSING')
-              : fixtureYaml,
+          code: warnings
+            ? warningYaml
+            : kind === 'yaml'
+            ? 'changes: ['
+            : kind === 'missing'
+            ? fixtureYaml.replace('refid: A', 'refid: MISSING')
+            : fixtureYaml,
         },
       ],
       svgAspectRatio: 'disable',
@@ -50,7 +71,9 @@ function options(kind) {
     },
     transformations: {
       expressions:
-        kind === 'resize'
+        kind === 'warnings-mixed'
+          ? [{ refId: 'F', expression: '1 / 0' }]
+          : kind === 'resize'
           ? [{ refId: 'CALC', expression: '((globalThis.__captureTestFormulaCount += 1), $A:last)' }]
           : [],
       RelativeTime: '',
@@ -66,7 +89,7 @@ function queryResult(kind) {
   if (kind === 'error') {
     return { results: { A: { status: 500, error: 'Synthetic query failure', errorSource: 'downstream', frames: [] } } };
   }
-  return {
+  const result = {
     results: {
       A: {
         status: 200,
@@ -87,6 +110,13 @@ function queryResult(kind) {
       },
     },
   };
+  if (kind.startsWith('warnings-')) {
+    const frame = JSON.parse(JSON.stringify(result.results.A.frames[0]));
+    frame.schema.refId = 'B';
+    frame.data.values[1] = [null];
+    result.results.B = { status: 200, frames: [frame] };
+  }
+  return result;
 }
 
 function compileReceiver(output) {
@@ -188,7 +218,7 @@ async function main() {
             schemaVersion: 40,
             version: 0,
             timezone: 'utc',
-            refresh: '',
+            refresh: kind === 'warnings-mixed' ? '5s' : '',
             time: { from: new Date(fromMs).toISOString(), to: new Date(toMs).toISOString() },
             panels: [
               {
@@ -199,6 +229,15 @@ async function main() {
                 datasource: { uid: datasourceUid, type: datasourceType },
                 targets: [
                   { refId: 'A', datasource: { uid: datasourceUid, type: datasourceType }, scenarioId: 'random_walk' },
+                  ...(kind.startsWith('warnings-')
+                    ? [
+                        {
+                          refId: 'B',
+                          datasource: { uid: datasourceUid, type: datasourceType },
+                          scenarioId: 'random_walk',
+                        },
+                      ]
+                    : []),
                 ],
                 fieldConfig: { defaults: {}, overrides: [] },
                 options: options(kind),
@@ -499,6 +538,77 @@ async function main() {
         assert.equal(state.error.code, 'CAPTURE_PAYLOAD_TOO_LARGE');
         assert.equal(Object.hasOwn(state, 'snapshot'), false);
         assert.equal(Object.hasOwn(state, 'payloadBytes'), false);
+      }
+    );
+
+    for (const [id, kind] of [
+      ['N30', 'warnings-visible'],
+      ['N31', 'warnings-muted'],
+    ]) {
+      await scenario(id, 'gray tooltip: missing input, null and rule-level muting', { kind }, async ({ page }) => {
+        const value = await snapshot(page);
+        assert.ok(value.diagnostics.some((d) => d.code === 'MISSING_INPUT'));
+        assert.ok(value.diagnostics.some((d) => d.code === 'MISSING_VALUE'));
+        assert.ok(value.elements[0].noData);
+        assert.equal(
+          await page.locator('#cell-a rect').evaluate((el) => getComputedStyle(el).fill),
+          'rgb(142, 142, 142)'
+        );
+        await page.locator('#cell-a').hover();
+        const tooltip = page.locator('[data-tooltip-id="cell-a"]');
+        await tooltip.waitFor();
+        const general = tooltip.getByText('Нет данных для определения состояния', { exact: true });
+        assert.equal(await general.evaluate((el) => getComputedStyle(el).fontSize), '12px');
+        assert.equal(await tooltip.getByText('Synthetic note').evaluate((el) => getComputedStyle(el).fontSize), '13px');
+        assert.equal(await tooltip.locator('li').count(), kind === 'warnings-muted' ? 0 : 2);
+        if (kind === 'warnings-visible') {
+          assert.equal(
+            await tooltip
+              .locator('li')
+              .first()
+              .evaluate((el) => getComputedStyle(el).fontSize),
+            '12px'
+          );
+        }
+      });
+    }
+    await scenario(
+      'N32',
+      'real error remains; pinned tooltip follows data loss and recovery',
+      { kind: 'warnings-mixed' },
+      async ({ page }) => {
+        await visibleValue(page);
+        const value = await snapshot(page);
+        assert.ok(value.diagnostics.some((d) => d.code === 'MISSING_INPUT'));
+        assert.ok(value.diagnostics.some((d) => d.code === 'NON_FINITE_VALUE'));
+        await page.locator('#cell-a rect').hover();
+        const tooltip = page.locator('[data-tooltip-id="cell-a"]');
+        await tooltip.waitFor();
+        assert.equal(await tooltip.locator('li').count(), 1);
+        assert.match(await tooltip.locator('li').innerText(), /Формула не вернула конечное число/);
+        assert.equal(await tooltip.locator('li').evaluate((el) => getComputedStyle(el).fontSize), '12px');
+        assert.equal(
+          await tooltip.getByText('95', { exact: true }).evaluate((el) => getComputedStyle(el).fontSize),
+          '13px'
+        );
+        await page.locator('#cell-a rect').click({ button: 'right' });
+        await page.mouse.move(900, 600);
+        const pinned = page.locator('[data-tooltip-id$="-cell-a"]');
+        await pinned.waitFor();
+        let current = null;
+        await page.route('**/api/ds/query*', (route) => {
+          const result = queryResult('warnings-mixed');
+          result.results.A.frames[0].data.values[1] = [current];
+          return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(result) });
+        });
+        // Настоящее dashboard refresh обновляет закреплённый tooltip без новой навигации.
+        await pinned.getByText('Нет данных для определения состояния', { exact: true }).waitFor();
+        assert.equal(await pinned.locator('li').count(), 1);
+        current = 10;
+        await pinned.getByText('10', { exact: true }).waitFor();
+        assert.equal(await pinned.getByText('Нет данных для определения состояния', { exact: true }).count(), 0);
+        assert.equal(await page.locator('#cell-a rect').evaluate((el) => getComputedStyle(el).fill), 'rgb(0, 128, 0)');
+        assert.equal((await snapshot(page)).metrics.find((metric) => metric.selectors.refId === 'A').scalar.value, 10);
       }
     );
   } finally {

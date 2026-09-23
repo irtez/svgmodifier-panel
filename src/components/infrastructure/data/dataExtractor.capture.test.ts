@@ -50,7 +50,7 @@ describe('capture field sources', () => {
     const result = await extractFields(input, undefined, range, capture);
     const extracted = result.get('A')!.values.get('Boolean legend')!;
 
-    expect(extracted.values).toEqual(['true', 'null', '7']);
+    expect(extracted.values).toEqual(['true', null, '7']);
     expect(capture.getOrigin(extracted)).toEqual({
       fieldName: 'status',
       fieldType: FieldType.boolean,

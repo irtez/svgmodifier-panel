@@ -110,6 +110,48 @@
 | E04 | Необычное, но корректное сравнение | Вычисляется как написано, намерение не угадывается | [calculations.test.ts](../src/components/domain/utils/calculations.test.ts) |
 | E05 | Две выборки дают 0.004+0.005 и настоящий ноль | Raw-суммы сохраняют 0.009 и 0; округление первой до 0.01 применяется только к display value | [querySelections.test.ts](../src/components/domain/services/querySelections.test.ts) |
 
+## Предупреждения об отсутствии данных
+
+[Настройка и примеры YAML](no-data-warnings.md). Флаг влияет только на tooltip;
+числа, winner, цвет и полный JSON не фильтруются. Actual null теперь даёт no-data
+вместо ошибки нечислового результата; алгоритмы агрегирования сохранены.
+
+| ID | Вход | Ожидаемое поведение | Проверка |
+| --- | --- | --- | --- |
+| N01 | `[10, null]` и `[10, undefined]` для total/min/max/last/delta | Нет частичного результата; `MISSING_VALUE`, warning | [noDataInputs.test.ts](../src/components/domain/services/noDataInputs.test.ts) |
+| N02 | Строки `null`, пустая, `abc`, числа NaN/±Infinity | `NON_FINITE_VALUE`, не заглушаемый no-data | [noDataInputs.test.ts](../src/components/domain/services/noDataInputs.test.ts) |
+| N03 | Null и NaN среди нужных точек total/min/max | Ошибка числа важнее пропуска | [noDataInputs.test.ts](../src/components/domain/services/noDataInputs.test.ts) |
+| N04 | Last `[null,10]`, delta `[10,null,20]`, count `[null,null]`, last `[0]` | Результаты 10, 10, 2, 0; нет ложных предупреждений | [noDataInputs.test.ts](../src/components/domain/services/noDataInputs.test.ts) |
+| N05 | Переполнение суммы и пустой ряд | Переполнение — ошибка; пустой ряд — `EMPTY_INPUT` | [noDataInputs.test.ts](../src/components/domain/services/noDataInputs.test.ts) |
+| N06 | Table: null, строка `null`, 10 | Пропуск и ошибка различаются; строки читаемы, winner=10 | [noDataInputs.test.ts](../src/components/domain/services/noDataInputs.test.ts) |
+| N07 | Временной срез оставляет только null | Нет подмены предыдущей точкой; `MISSING_VALUE` | [noDataInputs.test.ts](../src/components/domain/services/noDataInputs.test.ts) |
+| N08 | Корректная формула/условие без нужного входа | No-data warning, ноль не подставляется | [noDataInputs.test.ts](../src/components/domain/services/noDataInputs.test.ts) |
+| N09 | `$MISSING +`, `$MISSING >`, strict-invalid `$MISSING + 010` | Отсутствие входа не скрывает синтаксическую ошибку; режим проверки совпадает с выполнением | [noDataInputs.test.ts](../src/components/domain/services/noDataInputs.test.ts) |
+| N10 | Все запросы отсутствуют; flag отсутствует/false/true | Серый и общий no-data остаются всегда; true скрывает детали только в UI | [noDataWarnings.test.ts](../src/components/application/adapters/noDataWarnings.test.ts) |
+| N11 | A=95, B=null, C=`abc`, flag=true | Красный по A; B скрыт, ошибка C остаётся; API сохраняет обе причины | [noDataWarnings.test.ts](../src/components/application/adapters/noDataWarnings.test.ts) |
+| N12 | Два правила одного элемента, разные flag | Скрываются только предупреждения своего правила | [noDataWarnings.test.ts](../src/components/application/adapters/noDataWarnings.test.ts) |
+| N13 | Flag — строки `true`/`false` или число 1 | Предупреждения не скрываются; есть `INVALID_TOOLTIP_SETTING` | [noDataWarnings.test.ts](../src/components/application/adapters/noDataWarnings.test.ts) |
+| N14 | Query timeout и отсутствие результата | Один timeout в tooltip при обоих flag; обе записи в полном результате | [noDataWarnings.test.ts](../src/components/application/adapters/noDataWarnings.test.ts) |
+| N15 | G → F → A, у A timeout | В tooltip первичная ошибка A, не каскад производных no-data | [noDataWarnings.test.ts](../src/components/application/adapters/noDataWarnings.test.ts) |
+| N16 | Корректная и сломанная формулы без входов, flag=true | No-data скрыт; синтаксическая ошибка видна | [noDataWarnings.test.ts](../src/components/application/adapters/noDataWarnings.test.ts) |
+| N17 | Один отказ используется повторно | Tooltip не дублирует одно и то же сообщение | [noDataWarnings.test.ts](../src/components/application/adapters/noDataWarnings.test.ts) |
+| N18 | Неверный filter и неизвестный calculation | Ошибки настроек не заглушаются | [noDataWarnings.test.ts](../src/components/application/adapters/noDataWarnings.test.ts) |
+| N19 | AutoConfig: A пропал, B занял его индикатор | Ошибка A остаётся общей, не приписывается B | [noDataWarnings.test.ts](../src/components/application/adapters/noDataWarnings.test.ts) |
+| N20 | No-data, ошибка, метрика и авторский текст; hover/pinned | Сообщения 12px; метрика и авторский текст 13px | [tooltip.test.tsx](../src/components/presentation/tooltips/svgTooltip/tooltip.test.tsx) |
+| N21 | Те же данные с flag=true/false и цепочкой ошибок | JSON diagnostics/metrics/elements одинаковы; authored flag сохранён; schema v1 валидна | [snapshot.test.ts](../src/components/capture/snapshot.test.ts) |
+| N22 | Доступное число и `condition: 42` | `INVALID_CONDITION`; число и базовый цвет не пропадают | [noDataInputs.test.ts](../src/components/domain/services/noDataInputs.test.ts) |
+| N23 | Явный show=false при ошибках/no-data | Tooltip не включается; диагностика остаётся | [noDataWarnings.test.ts](../src/components/application/adapters/noDataWarnings.test.ts) |
+| N24 | Ошибка datasource без refId, зависимый запрос пуст | Известная ошибка не скрывается флагом | [noDataWarnings.test.ts](../src/components/application/adapters/noDataWarnings.test.ts) |
+| N25 | Видимое и отключённое правила одного элемента | Ошибки отключённого правила не попадают в соседний tooltip | [noDataWarnings.test.ts](../src/components/application/adapters/noDataWarnings.test.ts) |
+| N26 | `$MISSING + $B` и обратный порядок, B нечисловой | Проверяются оба входа; ошибка видна, пропуск сохранён в API | [noDataWarnings.test.ts](../src/components/application/adapters/noDataWarnings.test.ts) |
+| N27 | Missing перед входом с timeout в формуле/условии | Timeout не скрывается порядком входов | [noDataWarnings.test.ts](../src/components/application/adapters/noDataWarnings.test.ts) |
+| N28 | Неиспользуемая формула с двумя отказавшими входами | Оба источника есть в валидном snapshot; ссылки diagnosticIds уникальны | [snapshot.test.ts](../src/components/capture/snapshot.test.ts) |
+| N29 | Table: все строки null/нечисловые | Нет winner; tooltip показывает причины без сводного повтора, ошибка не скрывается | [noDataWarnings.test.ts](../src/components/application/adapters/noDataWarnings.test.ts) |
+| N30 | Browser: серый сервис, flag=false | Hover показывает общий no-data и обе причины; CSS 12px/13px, полный snapshot | [plugin-capture.browser.cjs](../tests/capture/plugin-capture.browser.cjs) |
+| N31 | Browser: тот же серый сервис, flag=true | Только общий no-data и авторский текст; обе причины остаются в snapshot | [plugin-capture.browser.cjs](../tests/capture/plugin-capture.browser.cjs) |
+| N32 | Browser: красный + missing + ошибка; refresh → null → 10 | Ошибка остаётся; закреплённый tooltip и цвет обновляются без навигации; JSON сохраняет причины | [plugin-capture.browser.cjs](../tests/capture/plugin-capture.browser.cjs) |
+| N33 | Доступное число одновременно с ошибкой datasource, обычный query и sum | Число 95 и красный цвет сохраняются; ошибка источника не исчезает из tooltip | [noDataWarnings.test.ts](../src/components/application/adapters/noDataWarnings.test.ts) |
+
 ## Время, tooltip, SVG и обновления
 
 | ID | Вход | Ожидаемое поведение | Проверка |

@@ -124,6 +124,51 @@ it('[X01] сохраняет исходные имена/точность и mis
   expect(snapshot.diagnostics).toEqual(expect.arrayContaining([expect.objectContaining({ code: 'MISSING_INPUT' })]));
 });
 
+it('[N21] скрытые UI-предупреждения и цепочки причин остаются в полном v1 snapshot', async () => {
+  const yaml = config('[{refid: A}, {refid: B}, {refid: G}]').replace(
+    'tooltip: {show: false}',
+    'tooltip: {show: true, hideNoDataWarnings: true}'
+  );
+  const frames = [graph('A', 'value', [95]), graph('B', 'value', [null])];
+  const expressions = [
+    { refId: 'F', expression: '1 / 0' },
+    { refId: 'G', expression: '$F + 1' },
+  ];
+  const muted = await run(yaml, frames, expressions);
+  const visible = await run(yaml.replace('hideNoDataWarnings: true', 'hideNoDataWarnings: false'), frames, expressions);
+  expect(muted.snapshot.diagnostics).toEqual(visible.snapshot.diagnostics);
+  expect(muted.snapshot.metrics).toEqual(visible.snapshot.metrics);
+  expect(muted.snapshot.elements).toEqual(visible.snapshot.elements);
+  expect(muted.snapshot.diagnostics.map((d) => d.code)).toEqual(
+    expect.arrayContaining(['MISSING_VALUE', 'MISSING_INPUT', 'NON_FINITE_VALUE'])
+  );
+  expect(muted.snapshot.configuration.rules[0].authoredAttributes.tooltip).toEqual({
+    show: true,
+    hideNoDataWarnings: true,
+  });
+  expect(muted.snapshot.metrics.find((m) => m.selectors.refId === 'A')?.scalar).toMatchObject({
+    value: 95,
+    color: 'red',
+  });
+});
+
+it('[N28] неиспользуемая формула сохраняет все ошибочные входы в JSON', async () => {
+  const { snapshot } = await run(
+    config('[{refid: A}]'),
+    [graph('A', 'value', [95]), graph('B', 'value', ['abc'])],
+    [{ refId: 'F', expression: '$MISSING + $B' }]
+  );
+  const failures = snapshot.diagnostics.filter((d) => d.source.expressionRefId === 'F');
+  expect(failures.map((d) => [d.code, d.source.refId])).toEqual(
+    expect.arrayContaining([
+      ['MISSING_INPUT', 'MISSING'],
+      ['NON_FINITE_VALUE', 'B'],
+    ])
+  );
+  expect(snapshot.expressions[0].inputs.map((input) => input.refId)).toEqual(['MISSING', 'B']);
+  expect(snapshot.metrics[0].scalar?.value).toBe(95);
+});
+
 it('[X02] две суммы refid/legend сохраняют независимые входы и общий counter', async () => {
   const { snapshot } = await run(config('[{refid: A, legend: "^worker", sum: Total}]'), [
     graph('A', 'api-a', [10]),

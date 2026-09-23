@@ -8,6 +8,7 @@ import {
   TooltipContent,
 } from 'components/domain/models';
 import { createSvgUpdateOperation } from 'components/infrastructure/svg/operations';
+import { tooltipDiagnostics } from './tooltipDiagnostics';
 
 export interface NotifyOptions {
   show: boolean;
@@ -27,16 +28,6 @@ export interface PanelPresentation {
 }
 
 const NO_DATA_COLOR = '#8e8e8e';
-const TOOLTIP_DIAGNOSTICS = new Set([
-  'MISSING_INPUT',
-  'EMPTY_INPUT',
-  'NON_FINITE_VALUE',
-  'CALCULATION_ERROR',
-  'INVALID_CONDITION',
-  'QUERY_ERROR',
-  'MISSING_FIELD',
-  'AMBIGUOUS_FIELD',
-]);
 
 export function buildPanelPresentation(
   evaluation: PanelEvaluation,
@@ -71,7 +62,10 @@ export function buildPanelPresentation(
         for (const table of rule.tables) {
           pushTooltipItem(element.id, table, rule.attributes.tooltip, tooltipContent);
         }
-        const messages = rule.diagnostics?.filter((item) => TOOLTIP_DIAGNOSTICS.has(item.code)) ?? [];
+        const messages = tooltipDiagnostics(
+          rule.diagnostics ?? [],
+          rule.attributes.tooltip.hideNoDataWarnings === true
+        );
         if (messages.length || element.noData) {
           let item = tooltipContent.find((item) => item.id === element.id);
           if (!item) {
@@ -83,7 +77,7 @@ export function buildPanelPresentation(
             tooltipContent.push(item);
           }
           if (messages.length) {
-            item.diagnostics = [...(item.diagnostics ?? []), ...messages];
+            item.diagnostics = tooltipDiagnostics([...(item.diagnostics ?? []), ...messages]);
           }
           if (element.noData) {
             item.noData = true;

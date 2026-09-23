@@ -357,7 +357,7 @@ export function buildSnapshot(input: SnapshotInput): SvgModifierSnapshotV1 {
         source: { expressionRefId: recorded.expression.refId },
       });
     }
-    const diagnosticIds = errors.map((item) => diagnostic(item));
+    const diagnosticIds = [...new Set(errors.map((item) => diagnostic(item)))];
     return {
       id: 'expression-' + index,
       refId: recorded.expression.refId,

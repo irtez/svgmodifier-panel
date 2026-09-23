@@ -13,6 +13,8 @@ import type { EvaluationTrace } from 'components/capture/trace';
 import { queriesFilter } from './queryFilter';
 import { selectBestQuery } from './queryProcessor';
 
+const bindingErrors = new Set(['MISSING_ELEMENT', 'UNMATCHED_PATTERN', 'INVALID_PATTERN', 'INVALID_SELECTOR']);
+
 export function evaluatePanel(
   rulesByElementId: RulesByElementId,
   data: DataFrameMap,
@@ -53,7 +55,13 @@ export function evaluatePanel(
       }
 
       firstDynamicAttributes ??= attributes;
-      const ruleContext = { ...context, diagnostics: [] as Diagnostic[], source: rule.source, elementIds: [id] };
+      const ruleContext = {
+        ...context,
+        diagnostics: [] as Diagnostic[],
+        inputDiagnostics: context.diagnostics,
+        source: rule.source,
+        elementIds: [id],
+      };
       const allCandidates = getMetricsData(
         attributes.metrics!,
         data,
@@ -76,6 +84,18 @@ export function evaluatePanel(
         );
       }
       const ruleDiagnostics = candidates.slots?.flatMap((slot) => slot.diagnostics) ?? [];
+      // Ошибки настройки принадлежат правилу, не всем соседним правилам элемента.
+      ruleDiagnostics.push(
+        ...context.diagnostics
+          .filter(
+            (diagnostic) =>
+              diagnostic.source?.path &&
+              diagnostic.source.path === rule.source?.path &&
+              diagnostic.source.pageIndex === rule.source?.pageIndex &&
+              !bindingErrors.has(diagnostic.code)
+          )
+          .map((diagnostic) => ({ ...diagnostic, elementIds: [id] }))
+      );
       const unavailableSlot = candidates.slots?.find((slot) => !slot.candidate);
       if (!candidates.slots?.length || unavailableSlot) {
         hasUnavailableMetric = true;
@@ -83,21 +103,18 @@ export function evaluatePanel(
         noDataFilling ??=
           unavailableSlot?.filling ?? allCandidates.slots?.[0]?.filling ?? attributes.metrics?.[0]?.filling;
       }
-      // Ошибка формулы относится и к элементам, использующим её refId.
-      for (const diagnostic of context.diagnostics) {
-        const inputRef = diagnostic.source?.expressionRefId ?? diagnostic.source?.refId;
-        const relevantFailure =
-          diagnostic.code === 'QUERY_ERROR' ||
-          diagnostic.code === 'CALCULATION_ERROR' ||
-          diagnostic.source?.expressionRefId;
-        if (
-          relevantFailure &&
-          ((!inputRef && !autoDistribution) ||
-            ruleDiagnostics.some((item) => inputRef && item.source?.refId === inputRef))
-        ) {
-          ruleDiagnostics.push({ ...diagnostic, elementIds: [id] });
+      // Связываем причины только назначенных результатов, в том числе цепочки формул.
+      const visited = new Set<Diagnostic>();
+      const bindCauses = (diagnostic: Diagnostic) => {
+        for (const cause of diagnostic.causes ?? []) {
+          if (!visited.has(cause)) {
+            visited.add(cause);
+            ruleDiagnostics.push({ ...cause, elementIds: [id] });
+            bindCauses(cause);
+          }
         }
-      }
+      };
+      ruleDiagnostics.slice().forEach(bindCauses);
       diagnostics.push(...ruleDiagnostics);
       const selection = selectBestQuery(candidates);
 
@@ -133,7 +150,6 @@ export function evaluatePanel(
 
 function mergeDiagnostics(diagnostics: Diagnostic[], rules: RulesByElementId): Diagnostic[] {
   const unique = new Map<string, Diagnostic>();
-  const bindingErrors = new Set(['MISSING_ELEMENT', 'UNMATCHED_PATTERN', 'INVALID_PATTERN', 'INVALID_SELECTOR']);
   for (const diagnostic of diagnostics) {
     const key = JSON.stringify([diagnostic.code, diagnostic.severity, diagnostic.message, diagnostic.source]);
     const ids = new Set([...(unique.get(key)?.elementIds ?? []), ...(diagnostic.elementIds ?? [])]);

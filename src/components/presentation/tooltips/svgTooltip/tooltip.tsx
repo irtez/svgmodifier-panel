@@ -5,7 +5,7 @@ import { TimeRange } from '@grafana/data';
 
 import { PanelOptions } from 'types';
 import { TooltipContent } from 'components/domain/models';
-import { getTooltipContainerStyles, getContentClass } from './styles';
+import { getTooltipContainerStyles, getContentClass, getDiagnosticStyles } from './styles';
 import { useTooltipLogic } from './hooks';
 import { TimeSection } from './sections/timeSection';
 import { TextSection } from './sections/textSection';
@@ -53,9 +53,11 @@ const TooltipContentComponent: React.FC<{
         {textAbove && <TextSection currentText={textAbove as string[]} />}
         {metrics && <MetricsSection queryData={metrics} options={options} />}
         {tableMetrics && <TableSection tables={tableMetrics} />}
-        {content.noData && <TextSection currentText={['Нет данных для определения состояния']} />}
+        {content.noData && (
+          <div style={{ ...getDiagnosticStyles(), marginBottom: '8px' }}>Нет данных для определения состояния</div>
+        )}
         {diagnostics && (
-          <ul style={{ margin: '6px 0', paddingLeft: '20px' }}>
+          <ul style={{ ...getDiagnosticStyles(), margin: '6px 0', paddingLeft: '20px' }}>
             {diagnostics.map((diagnostic, index) => (
               <li key={index}>
                 {diagnostic.source?.legend ? `${diagnostic.source.legend}: ` : ''}
