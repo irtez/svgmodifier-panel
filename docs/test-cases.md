@@ -1,5 +1,17 @@
 # Каталог сценариев поведения
 
+## Компактный capture v2
+
+| ID | Вход | Ожидаемое поведение | Проверка |
+| --- | --- | --- | --- |
+| V01 | HEX, RGB/RGBA, CSS names, transparent | Точные каналы и alpha; none/gradient/invalid не становятся чёрным | [colors.test.ts](../src/components/capture/colors.test.ts) |
+| V02 | Relative/base/subpath, public origin, duplicate query parameters | Разбирается только доказанное назначение этой Grafana, URL не переписывается и не открывается | [links.test.ts](../src/components/capture/links.test.ts) |
+| V03 | Чужой origin, unsafe scheme, credentials, malformed UID, duplicate panelId | Сохраняется непрозрачное назначение либо неопределённый panelId; нет произвольного выбора | [links.test.ts](../src/components/capture/links.test.ts) |
+| V04 | Compact payload с precision/zero/missing и static objects | Schema v2 принимает факты, не требует legacy diagram/config | [contractV2.test.ts](../src/components/capture/contractV2.test.ts) |
+| V05 | Dangling/duplicate IDs, invalid winner, cycles, conflicting availability | Нарушение ссылочной целостности или состояния отклоняется | [contractV2.test.ts](../src/components/capture/contractV2.test.ts) |
+| V06 | NaN/Infinity/undefined, wrong version, legacy fields, invalid RGBA | Ответ не проходит JSON/schema/state validation | [contractV2.test.ts](../src/components/capture/contractV2.test.ts) |
+| V07 | UTF-8 exact byte boundary и другой panel ID | Равенство лимиту допустимо, превышение и чужая identity отклоняются | [contractV2.test.ts](../src/components/capture/contractV2.test.ts) |
+
 Это постоянный каталог проверяемого поведения плагина. ID стабилен: он нужен для связи обсуждения, теста и изменения поведения. «Покрыт» означает ссылку на автоматический тест; «ожидает» означает, что сценарий принят в контракт, но тест ещё должен быть добавлен.
 
 При изменении, добавлении, переносе или удалении сценария обновляйте эту запись и ссылку на тест в том же коммите. Не заменяйте фактическое ожидание ссылкой на реализацию: здесь описан вход и наблюдаемый результат.
