@@ -160,14 +160,14 @@
 | N18 | Неверный filter и неизвестный calculation | Ошибки настроек не заглушаются | [noDataWarnings.test.ts](../src/components/application/adapters/noDataWarnings.test.ts) |
 | N19 | AutoConfig: A пропал, B занял его индикатор | Ошибка A остаётся общей, не приписывается B | [noDataWarnings.test.ts](../src/components/application/adapters/noDataWarnings.test.ts) |
 | N20 | No-data, ошибка, метрика и авторский текст; hover/pinned | Сообщения 12px; метрика и авторский текст 13px | [tooltip.test.tsx](../src/components/presentation/tooltips/svgTooltip/tooltip.test.tsx) |
-| N21 | Те же данные с flag=true/false и цепочкой ошибок | JSON diagnostics/metrics/elements одинаковы; authored flag сохранён; schema v1 валидна | [snapshot.test.ts](../src/components/capture/snapshot.test.ts) |
+| N21 | Те же данные с flag=true/false и цепочкой ошибок | JSON diagnostics/metrics/state одинаковы, схема v2 валидна | [facts.integration.test.ts](../src/components/capture/facts.integration.test.ts) |
 | N22 | Доступное число и `condition: 42` | `INVALID_CONDITION`; число и базовый цвет не пропадают | [noDataInputs.test.ts](../src/components/domain/services/noDataInputs.test.ts) |
 | N23 | Явный show=false при ошибках/no-data | Tooltip не включается; диагностика остаётся | [noDataWarnings.test.ts](../src/components/application/adapters/noDataWarnings.test.ts) |
 | N24 | Ошибка datasource без refId, зависимый запрос пуст | Известная ошибка не скрывается флагом | [noDataWarnings.test.ts](../src/components/application/adapters/noDataWarnings.test.ts) |
 | N25 | Видимое и отключённое правила одного элемента | Ошибки отключённого правила не попадают в соседний tooltip | [noDataWarnings.test.ts](../src/components/application/adapters/noDataWarnings.test.ts) |
 | N26 | `$MISSING + $B` и обратный порядок, B нечисловой | Проверяются оба входа; ошибка видна, пропуск сохранён в API | [noDataWarnings.test.ts](../src/components/application/adapters/noDataWarnings.test.ts) |
 | N27 | Missing перед входом с timeout в формуле/условии | Timeout не скрывается порядком входов | [noDataWarnings.test.ts](../src/components/application/adapters/noDataWarnings.test.ts) |
-| N28 | Неиспользуемая формула с двумя отказавшими входами | Оба источника есть в валидном snapshot; ссылки diagnosticIds уникальны | [snapshot.test.ts](../src/components/capture/snapshot.test.ts) |
+| N28 | Неиспользуемая формула с двумя отказавшими входами | Оба источника есть в валидном snapshot; ссылки diagnosticIds уникальны | [facts.integration.test.ts](../src/components/capture/facts.integration.test.ts) |
 | N29 | Table: все строки null/нечисловые | Нет winner; tooltip показывает причины без сводного повтора, ошибка не скрывается | [noDataWarnings.test.ts](../src/components/application/adapters/noDataWarnings.test.ts) |
 | N30 | Browser: серый сервис, flag=false | Hover показывает общий no-data и обе причины; CSS 12px/13px, полный snapshot | [plugin-capture.browser.cjs](../tests/capture/plugin-capture.browser.cjs) |
 | N31 | Browser: тот же серый сервис, flag=true | Только общий no-data и авторский текст; обе причины остаются в snapshot | [plugin-capture.browser.cjs](../tests/capture/plugin-capture.browser.cjs) |
@@ -206,42 +206,9 @@
 | G02 | Успех → loading → ошибка | Старый успех не публикуется как актуальный | [usePanelData.test.ts](../src/components/application/hooks/usePanelData.test.ts) |
 | G03 | Конфиг/диапазон меняется во время обработки | Публикуется только актуальное обновление | [usePanelData.test.ts](../src/components/application/hooks/usePanelData.test.ts) |
 
-## Контракт JSON-снимка
-
-[Формат и примеры](capture-contract.md). Эти проверки относятся к форме данных и
-согласованности ссылок. Они не означают, что producer, browser lifecycle или
-извлечение SVG уже реализованы: для них потребуются отдельные тесты.
-
-Все строки ниже покрыты [contract.test.ts](../src/components/capture/contract.test.ts);
-проверяется реальная JSON Schema и отдельные межобъектные инварианты, без mock
-валидатора. «Принимается» здесь означает валидность примера, не проверку exporter.
-
-| ID | Вход | Ожидаемое поведение |
-| --- | --- | --- |
-| J01 | Полный пример: scalar, table, expression, missing input, статическая фигура и частичная связь | Все обязательные разделы проходят структурную и ссылочную проверку |
-| J02 | Ошибка конфигурации; пустые результаты | Завершённый снимок с диагностикой принимается, результат расчёта не придумывается |
-| J03 | Неизвестные kind/schemaVersion/producer, лишнее поле, другая запрошенная panel ID | Снимок отклоняется; panel identity проверяется отдельно от schema |
-| J04 | Пропущенная коллекция, unsafe/fractional timestamp, Loading, нулевая generation/counter, отрицательный индекс | Нарушение обязательной структуры/диапазона отклоняется |
-| J05 | NaN, Infinity, undefined, Date, Map, функция, bigint, цикл или дырка в массиве | Отклоняются до JSON.stringify, а не молча превращаются в null/потерянное поле |
-| J06 | Число 12.3456789012 с displayValue 12.35; настоящий 0/null/boolean/object в ячейке | Тип и точность raw value сохраняются отдельно от отображения |
-| J07 | Неверный порог как строка в settings | Декларативная ошибка остаётся допустимыми данными; schema не требует «исправить» конфиг ради передачи |
-| J08 | Error от запросов, доступный красный результат и missing input, отключённый tooltip | Снимок сохраняет результат и полную диагностику независимо от tooltip |
-| J09 | Неудачная выборка без назначения элементу | Пустые elementIds допустимы; соседний индикатор не требуется |
-| J10 | Дубликаты внутренних ID, неизвестные rule/metric/diagnostic/diagram refs, отсутствующая обратная привязка rule/metric к element, индекс за пределами известного metrics/queries | Неоднозначные и несогласованные связи/индексы отклоняются |
-| J11 | Winner недоступен, относится к другому элементу/правилу, конфликтует с noData/row index или потерян при сохранённом winner выбранного правила | Снимок отклоняется; scalar winner не получает индекс строки |
-| J12 | Table: повторяющиеся имена колонок, неверная ширина строки/display, неверный индекс колонки/строки/cell issue | Одинаковые имена допустимы; индексы и размеры обязаны соответствовать массивам |
-| J13 | Read-only table без threshold column | Строки доступны без выдуманных row decisions и winner |
-| J14 | Ошибка расчёта table, известные строки и испорченная ячейка; cell issue на ненулевой ячейке | Строки/cell issue сохраняются, недоступная таблица не становится winner; причина замены на null требует null в этой ячейке |
-| J15 | Недоступный scalar/expression/input с числом, доступный scalar без результата; неправильный selected threshold; входы condition | Противоречивые state/trace отвергаются; скалярные входы condition сохраняются отдельно, их доступность и diagnostic refs проверяются |
-| J16 | Исходный legend, display label и изменённый SVG-текст; статическая зелёная фигура | Имена/тексты остаются раздельными, статической фигуре не приписывается метрика |
-| J17 | Решение красное, но наблюдаемый fill none или gradient; неверный RGBA/negative bounds | Разные decision/paint допустимы без выдуманного RGB; диапазоны чисел проверяются |
-| J18 | Grid без измеренного SVG; исходный legacy mode table; rendered без viewport; неотрисованный SVG с измерениями | Допустимые режимы сохраняются, выдуманная измеренная геометрия отклоняется |
-| J19 | Неизвестный/циклический parent, частичная draw.io связь, чужой resolved endpoint, неверный ruleId ссылки, SVG markers без embedded model | Явная неразрешённая внешняя ссылка допустима; внутренние ссылки/endpoints проверяются; SVG markers сохраняются без выдуманной draw.io связи |
-| J20 | JSON с не-ASCII текстом ровно на лимите и на байт больше | Считаются UTF-8 bytes полного payload; превышение отклоняется без усечения |
-
 ## Capture-only факты расчёта
 
-Проверки [snapshot.test.ts](../src/components/capture/snapshot.test.ts) используют
+Проверки [facts.integration.test.ts](../src/components/capture/facts.integration.test.ts) используют
 настоящие parser → preparation → extraction → expressions → evaluator →
 presentation. Каждый обычный сценарий сравнивает **весь** результат расчёта и
 представления capture-off/on, затем проверяет снимок schema/reference validator.
@@ -255,7 +222,7 @@ presentation. Каждый обычный сценарий сравнивает 
 | X04 | Table с числом, 0, boolean и null | Raw типы и победившая строка сохранены, её level/color/threshold относятся к одному результату |
 | X05 | Table без thresholdKey | Строки читаются без числового winner |
 | X06 | Пороговая колонка NaN/Infinity/null | Недоступная таблица сохраняет строки; непредставимые числа отличаются от обычного null через cellIssues |
-| X07 | Condition false и condition с отсутствующим входом | Успешный false отличим от error, число и базовый цвет сохраняются |
+| X07 | Condition false и condition с отсутствующим входом | Ошибка сохраняется в diagnostics, число и базовый цвет сохранены; отвергнутые пороги не экспортируются |
 | X08 | Formula/condition со ссылкой на 0.004 | Сохраняются точный вход, результат 4 и авторский lvl=0 |
 | X09 | AutoConfig при missing input | Успехи назначаются как раньше; ошибки не приклеиваются к соседнему индикатору |
 | X10 | Синтаксически неверный YAML | Есть invalid_configuration и YAML_PARSE_ERROR, без фиктивных метрик |
@@ -267,11 +234,11 @@ presentation. Каждый обычный сценарий сравнивает 
 | X16 | Пороговая колонка не найдена до обработки строк | Raw строки остаются, фильтрация не выдаётся за выполненную |
 | X17 | Формула с наблюдаемым побочным эффектом | Один вызов на каждый run; сериализация не исполняет формулу снова |
 | X18 | RefId формулы уже занят входным query | Входное число сохраняется, невыполненная формула имеет unavailable/null с отдельной причиной |
-| X19 | Некорректный числовой title | Декларация остаётся в settings, тип title результата string/null не нарушается |
+| X19 | Некорректный числовой title | Неверный title опущен, структура JSON корректна; полных settings нет |
 | X20 | Мутация values/timestamps между расчётом и сериализацией | Source count и временные границы относятся к расчёту |
 | X21 | Condition с наблюдаемым побочным эффектом и повторная сборка | Повторные snapshots не исполняют condition |
 | X22 | Вложенный объект/массив raw-ячейки меняется до сериализации | Экспорт сохраняет JSON-значение, наблюдавшееся при расчёте |
-| X23 | Неизвестный calculation | В settings остаётся ошибочная декларация, в source — реально выполненный last |
+| X23 | Неизвестный calculation | В metric.calculation остаётся декларация, в source — реально выполненный last |
 | X24 | Query без refid/legend | Selection none, unavailable/unresolved; выдуманного поиска legend нет |
 | X25 | Технический failed после частичного trace | Известные результаты остаются без висячих ссылок на отсутствующие evaluation elements |
 | X26 | Ошибка второго query | Source содержит известные metricsIndex/queryIndex, metricIds не включает успешного соседа |
@@ -291,70 +258,6 @@ presentation. Каждый обычный сценарий сравнивает 
 | XF03 | Capture отсутствует | Дополнительные metadata/request getters не читаются, результат extraction идентичен |
 | XF04 | Один прямой request target, explicit frame metadata, неоднозначные/proxy/null targets | Сохраняются доступные uid/type; неизвестный исходный datasource остаётся null, без сети |
 
-## Факты SVG и отображённое оформление
-
-Unit-проверки находятся в [diagram.test.ts](../src/components/capture/diagram.test.ts),
-реальные layout/CSS — в [diagram.browser.cjs](../tests/capture/diagram.browser.cjs).
-Последние запускаются через `npm run test:capture:diagram`, отдельно от Jest.
-Используются настоящий initSVG и операции замены подписи/ссылки.
-Сборщик не меняет DOM; полученный полный снимок проходит schema/reference validator.
-
-| ID | Вход | Ожидаемое поведение |
-| --- | --- | --- |
-| V01 | Grid с исходным рисунком | ID, authoredText и связи сохраняются; live-текст, layout и paint не выдумываются |
-| V02 | Пустой, сломанный или не-SVG документ | missing/invalid различимы; invalid сопровождается диагностикой |
-| V03 | defs, use, изображение и линия без metadata | Ресурс не превращается в видимый объект, изображение — в OCR-текст, линия — в бизнес-связь |
-| V04 | Авторская ссылка и ссылки двух правил на один объект | Все декларации с происхождением сохранены; в grid applied=null |
-| V05 | Повторяющийся SVG ID | Нет привязки к произвольному первому объекту, есть диагностика |
-| V06 | ViewBox, transform и смещение SVG на странице | Bounds в CSS pixels относительно SVG; снимок валиден, DOM не изменён |
-| V07 | CSS/static fill, stroke, alpha, HTML color, gradient, разноцветная группа, marker | Каналы и фигуры раздельны; gradient без ложного RGBA; статическому цвету не приписана метрика |
-| V08 | Текст без ID, tspan/HTML строки, скрытый текст, use/image | Строки сохранены отдельно; скрытый текст не виден; use имеет bounds и явное ограничение paint |
-| V09 | Явная draw.io связь и тот же SVG без metadata | Только подтверждённые endpoints; ID линии не используется для догадки |
-| V10 | Плагин заменяет подпись и ссылку, winner красный при filling:none | Исходные текст/ссылка не потеряны, live label/href обновлены, наблюдаемый зелёный fill остаётся зелёным |
-| V11 | Resize и новый transform | Координаты измерены заново, старые bounds не переиспользуются |
-| V12 | Нативная raw-DEFLATE metadata и отсутствующий target | Поддержанный формат прочитан; неизвестный cellId сохранён, ссылка null с диагностикой |
-| V13 | В исходном XML есть внешний DTD, script, image, href | Документ не вставляется в UI, выполнение и сеть отсутствуют |
-| V14 | Ссылка вокруг всего SVG в HTML страницы | Внешний UI href не приписывается фигурам |
-| V15 | Лимит числа узлов или глубины | Весь capture завершается явной ошибкой без успешного усечения |
-| V16 | Повреждённая metadata, затем корректный повторный capture | SVG доступен; устаревшая диагностика заменена, исходный snapshot не изменён |
-| V17 | Два одинаковых data-cell-id | Metadata-конец не разрешён; причина доступна и через связанные evaluation elements |
-| V18 | Слишком большой source или внутренние XML-сущности | Лимит/невалидный SVG отмечены до извлечения фактов |
-| V19 | RGB/RGBA, проценты, none, gradient, неизвестная цветовая функция | CSS сохраняется; RGBA только при известном представлении |
-| V20 | Автоматический HTML wrap, switch fallback, opacity:0/visibility:hidden | Три настоящие строки с разными координатами; скрытый/fallback текст не выдаётся за видимый |
-| V21 | Link updater добавляет обёртку вокруг текста без ID | Authored/live текст сопоставлен корректно, исходный документ остаётся отдельным |
-| V22 | Прозрачность задана на обёртке-ссылке, а не на фигуре | Обёртка и её opacity сохранены в родительской цепочке |
-| V23 | Live data-cell-id переставлены относительно исходного SVG | Metadata не подтверждает неверные концы; исходные ссылки и диагностика остаются |
-| V24 | Длинная подпись внутри множества групп | Общий бюджет authoredText ограничивает повторение у предков |
-| V25 | Вложенный SVG внутри ссылки | Ссылка наследуется внутри рисунка, но обход не выходит за его корень |
-
-## Ограниченное чтение metadata
-
-[diagramMetadata.test.ts](../src/components/capture/diagramMetadata.test.ts)
-проверяет XML отдельно от геометрии. Сжатие и распаковка настоящие, не mock.
-Новые/изменённые сценарии V/M требуют изменения этих таблиц в том же коммите.
-
-| ID | Вход | Ожидаемое поведение |
-| --- | --- | --- |
-| M01 | Отсутствующий/пустой content | Нет выдуманной ошибки или требования новой разметки |
-| M02 | ID, parent, типы, endpoints и посторонние свойства | Возвращаются только разрешённые исходные поля, не labels/style/XML |
-| M03 | object/UserObject wrapper | ID wrapper используется только при отсутствии собственного mxCell ID |
-| M04 | Одна diagram с XML, escaped XML или CDATA | Одна и та же модель прочитана |
-| M05 | Повторный arrow style и явное none | Последнее заданное значение сохранено, default не выдуман |
-| M06 | Невалидный XML, root, ID, вложенность, конфликт vertex/edge | invalid с диагностикой, без частичного списка cells |
-| M07 | Несколько diagram/model или смешанные payload | unsupported, нет произвольного выбора первой страницы |
-| M08 | DTD/ENTITY | Отказ до XML-парсинга и без исходного содержимого в сообщении |
-| M09 | DTD скрыт XML entity encoding | Повторный уровень тоже проверяется |
-| M10 | Unicode на точной границе UTF-8 бюджета и сверх неё | Считаются байты, лимит проверяется до DOMParser |
-| M11 | Cells сверх лимита, включая wrapper | Нет успешного допустимого префикса |
-| M12 | Отрицательный/NaN/Infinity/дробный лимит | Некорректный лимит не отключает защиту |
-| M13 | Реальные base64/DEFLATE/URL encoding, Unicode | Точные ID/концы восстановлены |
-| M14 | Нет нативного декодера | unsupported с отдельной причиной, без fallback-зависимости |
-| M15 | Ошибка base64, DEFLATE, URL encoding или UTF-8 | invalid без копии исходного payload в ошибке |
-| M16 | Малый compressed input с большим распакованным потоком | Распаковка остановлена до второго XML parse |
-| M17 | Точная граница распакованных байтов и один лишний байт | Граница принимается; превышение отклоняется |
-| M18 | DTD после распаковки | Запрещён до XML-парсинга модели |
-| M19 | Слишком много cells после распаковки | limited без частичных отношений |
-
 ## Session и публикация после обновления UI
 
 [session.test.ts](../src/components/capture/session.test.ts) проверяет границу hook,
@@ -373,7 +276,7 @@ Unit-проверки находятся в [diagram.test.ts](../src/components/
 | S07 | Receiver сохраняет factory и вызывает позже | Асинхронный вызов после возврата publish не выполняет exporter |
 | S08 | Обычные данные и принятие session | Полный валидный snapshot того же расчёта, исходное имя поля и применённый цвет |
 | S09 | Done → Loading/NotStarted → новый Done | Старый terminal сразу инвалидирован, старые frames не публикуются |
-| S10 | Grid, сломанный YAML/SVG, datasource Error | Диагностический terminal без ожидания SVG; status и полезные факты сохранены |
+| S10 | Grid, сломанный YAML/SVG, datasource Error | Grid: MODE_UNSUPPORTED; в SVG ошибки конфигурации/данных дают snapshot с диагностикой |
 | S11 | Streaming | CAPTURE_DATA_STATE_UNSUPPORTED, UI продолжает обновляться |
 | S12 | Новый YAML после переноса SVG в DOM | Новая конфигурация использует существующие элементы, цвет обновляется |
 | S13 | StrictMode и unmount/remount | SVG монтируется повторно, старый handle закрывается |
@@ -382,7 +285,10 @@ Unit-проверки находятся в [diagram.test.ts](../src/components/
 | S16 | Меняется только panel ID | Новый instance начинает run даже при тех же объектах входных данных |
 | S17 | Recorder бросает в recordField/beginRule | Capture завершается ошибкой, UI сохраняет значение и цвет |
 | S18 | Ошибочный getter дополнительных request metadata | Ошибка экспорта не отменяет успешную метрику |
-| S19 | SVG меняется в grid | Новое поколение содержит новые authored-подписи, не старый рисунок |
+| S20 | Только hook v1 | Producer игнорирует старый протокол без загрузки runtime |
+| S21 | UTF-8 JSON ровно на границе/байтом больше | Producer использует переданный receiver лимит; успех/TOO_LARGE |
+| S22 | Font readiness и новый run | Ждёт шрифты, не публикует устаревшее поколение |
+| S19 | SVG меняется в grid | Новое поколение снова получает MODE_UNSUPPORTED, скрытый рисунок не экспортируется |
 
 ## Защита вычислений от ошибок recorder
 
@@ -437,11 +343,11 @@ Grafana с собранным плагином. Создаёт и удаляет
 | ID | Вход | Ожидаемое поведение |
 | --- | --- | --- |
 | B01 | Обычный просмотр без hook | Правильные live подпись/цвет, нет загрузки capture chunk |
-| B02 | Принятый hook | Полный валидный снимок после SVG update: raw имена, authored/live текст и фактический fill |
-| B03 | Resize с формулой | Новые bounds/generation, число исполнений формулы не изменилось |
-| B04 | Grid | Terminal snapshot без скрытого SVG-render |
+| B02 | Принятый hook | Компактный снимок после SVG update: raw имена, actual fill, динамическое число не стало названием |
+| B03 | Resize с формулой | Актуальные связи/generation, число исполнений формулы не изменилось |
+| B04 | Grid | CAPTURE_MODE_UNSUPPORTED без скрытого SVG-render |
 | B05 | Сломанный YAML | invalid_configuration и диагностика вместо таймаута |
-| B06 | Сломанный SVG | invalid_configuration и invalid diagram |
+| B06 | Сломанный SVG | invalid_configuration и configurationStatus.svg=invalid |
 | B07 | Ошибка запроса | Error/unavailable и причина, не старое успешное число |
 | B08 | Метрика отсутствует | noData/диагностика и серый UI |
 | B09 | Hook отказал | UI работает, тяжёлый chunk не загружается |
@@ -467,6 +373,8 @@ Grafana с собранным плагином. Создаёт и удаляет
 | V25 | Rename и resize | Актуальные подписи и те же связи |
 | V26 | Нет root панели | Нет измерений или ссылок соседней панели |
 | V27 | SVG resources/глубокое дерево | Ресурсы пропускаются; явный safety limit перед layout |
+| V28 | Некорректная структура queries | Диагностики публикуются, exporter не падает |
+| V29 | Два selector одного правила на одном target | Winner может принадлежать второму варианту, валидатор сохраняет согласованность |
 
 ## Распределение autoConfig
 

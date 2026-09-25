@@ -217,7 +217,13 @@ export function validateSnapshotV2(value: unknown, context: { panelId: number; m
         check(metrics.get(id)?.ruleId === r.ruleId && indicator.metricIds.includes(id), 'binding')
       );
     }
-    const selected = indicator.ruleResults.find((r) => r.ruleId === state.selectedRuleId);
+    // Several prepared selectors may belong to the same authored rule at one target.
+    const selected = indicator.ruleResults.find(
+      (r) =>
+        r.ruleId === state.selectedRuleId &&
+        r.winnerMetricId === state.winnerMetricId &&
+        r.winnerRowIndex === state.winnerRowIndex
+    );
     check(state.selectedRuleId === null || selected, 'winner');
     check(
       (selected?.winnerMetricId ?? null) === state.winnerMetricId &&

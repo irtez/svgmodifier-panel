@@ -10,7 +10,6 @@ import type {
 import type { QuerySlot } from '../domain/services/dataHandler';
 import type { getConfig } from '../infrastructure/config/configBuilder';
 import type { Expr } from 'types';
-import type { ThresholdCheck } from './models';
 import { FieldSources } from './fieldSources';
 import { copyJson } from './jsonValues';
 
@@ -23,8 +22,8 @@ export interface InputTrace {
 }
 export interface CheckTrace {
   index: number;
-  condition: ThresholdCheck['condition'];
-  comparison: ThresholdCheck['comparison'];
+  condition: 'true' | 'false' | 'error' | 'not_evaluated' | 'not_present';
+  comparison: 'true' | 'false' | 'error' | 'not_evaluated';
   matched: boolean;
   inputs: InputTrace[];
   diagnostics: Diagnostic[];

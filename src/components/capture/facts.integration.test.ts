@@ -6,8 +6,8 @@ import { calculateExpressions } from '../domain/utils/calculations';
 import { evaluatePanel } from '../domain/services/evaluator';
 import { buildPanelPresentation } from '../application/adapters/panelPresentation';
 import { EvaluationTrace } from './trace';
-import { buildSnapshot, type SnapshotInput } from './snapshot';
-import { validateSnapshot } from './testing/validateSnapshot';
+import { buildSnapshotV2, type SnapshotInputV2 } from './snapshotV2';
+import { validateSnapshotV2 } from './testing/validateSnapshotV2';
 import type { Expr } from 'types';
 
 const range: TimeRange = { from: dateTime(0), to: dateTime(1000), raw: { from: '0', to: '1000' } };
@@ -64,7 +64,7 @@ async function run(
       mode: 'grid',
       notifySettings: { show: false, threshold: undefined },
     });
-    return { trace, extracted, evaluation, presentation };
+    return { trace, extracted, evaluation, presentation, prepared };
   }
   const ordinary = await evaluate(false);
   const captured = await evaluate(true);
@@ -72,30 +72,31 @@ async function run(
   expect(captured.extracted).toEqual(ordinary.extracted);
   expect(captured.evaluation).toEqual(ordinary.evaluation);
   expect(captured.presentation).toEqual(ordinary.presentation);
-  const snapshotInput: SnapshotInput = {
+  const snapshotInput: SnapshotInputV2 = {
     trace: captured.trace!,
+    root: null,
+    prepared: captured.prepared,
+    presentation: captured.presentation,
+    tooltipOptions: { sort: 'none', hideZeros: false, maxWidth: 400, maxHeight: 400, valuePosition: 'standard' },
+    linkContext: {
+      documentUrl: 'http://grafana.test/',
+      baseUrl: 'http://grafana.test/',
+      appUrl: 'http://grafana.test/',
+    },
     evaluation: captured.evaluation,
     panel: { id: 7, mode: 'grid', title: null },
     producerVersion: '1.4.0',
     observed: { generation: 1, dataState: 'Done', effectiveFromMs: 0, effectiveToMs: 1000, evaluatedAtMs: 1001 },
-    configuration: { yamlStatus: parsed.status, svgStatus: 'not_evaluated' },
+    configurationStatus: { yaml: parsed.status, svg: 'not_evaluated' },
     evaluationStatus: parsed.status === 'invalid' ? 'invalid_configuration' : 'evaluated',
-    diagram: {
-      status: 'not_rendered',
-      coordinateSpace: null,
-      viewport: null,
-      items: [],
-      connections: [],
-      diagnosticIds: [],
-    },
   };
-  const snapshot = buildSnapshot(snapshotInput);
-  expect(validateSnapshot(snapshot, { panelId: 7, maxPayloadBytes: 1024 * 1024 })).toEqual([]);
+  const snapshot = buildSnapshotV2(snapshotInput);
+  expect(validateSnapshotV2(snapshot, { panelId: 7, maxPayloadBytes: 1024 * 1024 })).toEqual([]);
   return {
     snapshot,
     captured,
     ordinary,
-    rebuild: (overrides: Partial<SnapshotInput> = {}) => buildSnapshot({ ...snapshotInput, ...overrides }),
+    rebuild: (overrides: Partial<SnapshotInputV2> = {}) => buildSnapshotV2({ ...snapshotInput, ...overrides }),
   };
 }
 
@@ -105,7 +106,7 @@ it('[X01] сохраняет исходные имена/точность и mis
   expect(snapshot.metrics[0]).toMatchObject({
     label: 'Reading',
     availability: 'available',
-    scalar: { value: 12.34567, displayValue: '12.35', color: 'red', level: 2 },
+    scalar: { value: 12.34567, displayValue: '12.35', color: { css: 'red' }, level: 2 },
     sources: [
       {
         refId: 'A',
@@ -120,11 +121,11 @@ it('[X01] сохраняет исходные имена/точность и mis
     ],
   });
   expect(snapshot.metrics[1]).toMatchObject({ availability: 'unavailable', scalar: null });
-  expect(snapshot.elements[0].winnerMetricId).toBe(snapshot.metrics[0].id);
+  expect(snapshot.indicators[0].state.winnerMetricId).toBe(snapshot.metrics[0].id);
   expect(snapshot.diagnostics).toEqual(expect.arrayContaining([expect.objectContaining({ code: 'MISSING_INPUT' })]));
 });
 
-it('[N21] скрытые UI-предупреждения и цепочки причин остаются в полном v1 snapshot', async () => {
+it('[N21] скрытые UI-предупреждения и цепочки причин остаются в полном v2 snapshot', async () => {
   const yaml = config('[{refid: A}, {refid: B}, {refid: G}]').replace(
     'tooltip: {show: false}',
     'tooltip: {show: true, hideNoDataWarnings: true}'
@@ -138,17 +139,14 @@ it('[N21] скрытые UI-предупреждения и цепочки пр�
   const visible = await run(yaml.replace('hideNoDataWarnings: true', 'hideNoDataWarnings: false'), frames, expressions);
   expect(muted.snapshot.diagnostics).toEqual(visible.snapshot.diagnostics);
   expect(muted.snapshot.metrics).toEqual(visible.snapshot.metrics);
-  expect(muted.snapshot.elements).toEqual(visible.snapshot.elements);
+  expect(muted.snapshot.indicators).toEqual(visible.snapshot.indicators);
   expect(muted.snapshot.diagnostics.map((d) => d.code)).toEqual(
     expect.arrayContaining(['MISSING_VALUE', 'MISSING_INPUT', 'NON_FINITE_VALUE'])
   );
-  expect(muted.snapshot.configuration.rules[0].authoredAttributes.tooltip).toEqual({
-    show: true,
-    hideNoDataWarnings: true,
-  });
-  expect(muted.snapshot.metrics.find((m) => m.selectors.refId === 'A')?.scalar).toMatchObject({
+
+  expect(muted.snapshot.metrics.find((m) => m.query.refId === 'A')?.scalar).toMatchObject({
     value: 95,
-    color: 'red',
+    color: { css: 'red' },
   });
 });
 
@@ -176,7 +174,7 @@ it('[X02] две суммы refid/legend сохраняют независимы
     graph('B', 'worker-a', [3]),
     graph('B', 'worker-b', [7]),
   ]);
-  expect(snapshot.metrics.map((metric) => [metric.queryCounter, metric.scalar?.value])).toEqual([
+  expect(snapshot.metrics.map((metric) => [metric.query.counter, metric.scalar?.value])).toEqual([
     [1, 30],
     [1, 10],
   ]);
@@ -202,7 +200,12 @@ it('[X04] таблица сохраняет raw типы, строку winner и
   ]);
   expect(result.winningRowIndex).toBe(0);
   expect(result.rowFilterStatus).toBe('applied');
-  expect(result.rows[0].decision).toMatchObject({ value: 95, level: 2, color: 'red', selectedThresholdIndex: 0 });
+  expect(result.rows[0].decision).toMatchObject({
+    value: 95,
+    level: 2,
+    color: { css: 'red' },
+    appliedThreshold: { index: 0 },
+  });
   expect(result.rows[2].decision).toBeNull();
 });
 
@@ -210,7 +213,7 @@ it('[X05] read-only table не получает числового winner', asyn
   const { snapshot } = await run(config('[{refid: T}]'), [table()]);
   expect(snapshot.metrics[0].table?.rows).toHaveLength(3);
   expect(snapshot.metrics[0].table?.winningRowIndex).toBeNull();
-  expect(snapshot.elements[0].winnerMetricId).toBeNull();
+  expect(snapshot.indicators[0].state.winnerMetricId).toBeNull();
 });
 
 it('[X06] ошибка всех строк не теряет таблицу и отличает NaN от исходного null', async () => {
@@ -230,16 +233,12 @@ it('[X07] condition: false и ошибка condition различаются пр
   );
   expect(snapshot.metrics[0].scalar).toMatchObject({
     value: 12.34567,
-    color: 'green',
+    color: { css: 'green' },
     level: 0,
-    selectedThresholdIndex: null,
+    appliedThreshold: null,
   });
-  expect(snapshot.metrics[0].scalar?.thresholdTrace.map((check) => check.condition)).toEqual(['false', 'error']);
-  expect(snapshot.metrics[0].scalar?.thresholdTrace[1].inputs[0]).toMatchObject({
-    refId: 'MISSING',
-    availability: 'unavailable',
-    value: null,
-  });
+  expect(snapshot.diagnostics.some((d) => d.code === 'MISSING_INPUT')).toBe(true);
+  expect(snapshot.metrics[0].scalar?.appliedThreshold).toBeNull();
 });
 
 it('[X08] формула и condition сохраняют неокруглённые входы', async () => {
@@ -252,8 +251,8 @@ it('[X08] формула и condition сохраняют неокруглённ�
     [{ refId: 'CALC', expression: '$A:last * 1000' }]
   );
   expect(snapshot.expressions[0]).toMatchObject({ value: 4, inputs: [{ value: 0.004 }] });
-  expect(snapshot.metrics[0].scalar).toMatchObject({ value: 4, level: 0, color: 'red' });
-  expect(snapshot.metrics[0].scalar?.thresholdTrace[0].inputs[0].value).toBe(0.004);
+  expect(snapshot.metrics[0].scalar).toMatchObject({ value: 4, level: 0, color: { css: 'red' } });
+  expect(snapshot.metrics[0].scalar?.appliedThreshold?.inputs[0].value).toBe(0.004);
 });
 
 it('[X09] autoConfig назначает успехи, а неудачные попытки оставляет без элемента', async () => {
@@ -261,9 +260,9 @@ it('[X09] autoConfig назначает успехи, а неудачные по
   const { snapshot } = await run(yaml);
   const missing = snapshot.metrics.filter((metric) => metric.availability === 'unavailable');
   expect(missing.length).toBeGreaterThan(0);
-  expect(missing.every((metric) => metric.elementIds.length === 0)).toBe(true);
-  expect(snapshot.elements[0].winnerMetricId).not.toBeNull();
-  expect(snapshot.elements[1].noData).not.toBeNull();
+  expect(missing.every((metric) => metric.indicatorIds.length === 0)).toBe(true);
+  expect(snapshot.indicators[0].state.winnerMetricId).not.toBeNull();
+  expect(snapshot.indicators[1].state.noData).toBe(true);
 });
 
 it('[X10] сломанный YAML возвращает завершённый снимок с ошибкой', async () => {
@@ -284,9 +283,9 @@ it('[X11] опубликованный снимок не зависит от п�
 it.each([0, 95])('[X12] настоящий %s остаётся доступным, в отличие от полного no-data', async (value) => {
   const { snapshot } = await run(config('[{refid: A}]'), [graph('A', 'value', [value])]);
   expect(snapshot.metrics[0].scalar?.value).toBe(value);
-  expect(snapshot.elements[0].noData).toBeNull();
+  expect(snapshot.indicators[0].state.noData).toBe(false);
   const absent = await run(config('[{refid: A}]'), []);
-  expect(absent.snapshot.elements[0].noData).not.toBeNull();
+  expect(absent.snapshot.indicators[0].state.noData).toBe(true);
   expect(absent.snapshot.metrics[0].scalar).toBeNull();
 });
 
@@ -296,11 +295,15 @@ it('[X13] отдельные подготовленные варианты со�
       .replace('id: a', 'id: [a, b]')
       .replace('title: Service Alpha', 'link: ["/d/first?from=now-1h", "/d/second?var-node=b"]')
   );
-  const rules = snapshot.configuration.rules;
-  expect(rules.map((rule) => rule.attributes.link)).toEqual(['/d/first?from=now-1h', '/d/second?var-node=b']);
-  expect(rules.map((rule) => rule.authoredAttributes.link)).toEqual([
-    ['/d/first?from=now-1h', '/d/second?var-node=b'],
-    ['/d/first?from=now-1h', '/d/second?var-node=b'],
+  expect(snapshot.rules).toHaveLength(1);
+  const url = (id: string) => snapshot.links.find((link) => link.id === id)!.url;
+  expect(snapshot.rules[0].navigation.map((n) => url(n.linkId))).toEqual([
+    '/d/first?from=now-1h',
+    '/d/second?var-node=b',
+  ]);
+  expect(snapshot.indicators.map((i) => i.navigation.map((n) => url(n.linkId)))).toEqual([
+    ['/d/first?from=now-1h'],
+    ['/d/second?var-node=b'],
   ]);
 });
 
@@ -310,13 +313,13 @@ it('[X14] не найденное правило остаётся с диагн�
     'image/svg+xml'
   );
   const { snapshot } = await run(config(), [graph('A', 'value', [95])], [], svg);
-  expect(snapshot.elements).toEqual([]);
+  expect(snapshot.indicators).toEqual([]);
   expect(snapshot.metrics).toEqual([]);
-  expect(snapshot.configuration.rules[0].elementIds).toEqual([]);
+  expect(snapshot.rules[0].indicatorIds).toEqual([]);
   expect(snapshot.diagnostics[0]).toMatchObject({
     code: 'MISSING_ELEMENT',
-    elementIds: [],
-    ruleIds: [snapshot.configuration.rules[0].id],
+    indicatorIds: [],
+    ruleIds: [snapshot.rules[0].id],
   });
 });
 
@@ -373,10 +376,10 @@ it('[X18] занятый refId формулы не выдаётся за выч�
   );
 });
 
-it('[X19] неверный title остаётся в settings, но не ломает JSON-тип результата', async () => {
+it('[X19] неверный title не ломает JSON-тип результата', async () => {
   const { snapshot } = await run(config('[{refid: A}]', 'title: 123'));
-  expect(snapshot.metrics[0].settings.title).toBe(123);
-  expect(snapshot.metrics[0].title).toBeNull();
+  expect(snapshot.metrics[0].title).toBeUndefined();
+  expect('settings' in snapshot.metrics[0]).toBe(false);
 });
 
 it('[X20] число использованных значений и время фиксируются при расчёте, не при сериализации', async () => {
@@ -418,7 +421,7 @@ it('[X22] вложенная raw-ячейка не меняется между �
 
 it('[X23] неизвестный reducer сохраняет декларацию и фактически применённый last', async () => {
   const { snapshot } = await run(config('[{refid: A}]', 'calculation: unknown'));
-  expect(snapshot.metrics[0].settings.calculation).toBe('unknown');
+  expect(snapshot.metrics[0].calculation).toBe('unknown');
   expect(snapshot.metrics[0].sources[0].calculation).toBe('last');
   expect(snapshot.metrics[0].scalar?.value).toBe(12.34567);
 });
@@ -426,10 +429,9 @@ it('[X23] неизвестный reducer сохраняет декларацию
 it('[X24] query без selector не выдаётся за попытку выбора legend', async () => {
   const { snapshot } = await run(config('[{label: MissingSelector}]'));
   expect(snapshot.metrics[0]).toMatchObject({
-    selection: 'none',
+    query: { selection: 'none' },
     kind: 'unresolved',
     sources: [],
-    selectors: { refId: null, legend: null },
   });
 });
 
@@ -442,10 +444,10 @@ it('[X25] технический отказ после частичного ра
       diagnostics: [{ code: 'EVALUATION_ERROR', severity: 'error', message: 'Synthetic failure' }],
     },
   });
-  expect(validateSnapshot(failed, { panelId: 7, maxPayloadBytes: 1024 * 1024 })).toEqual([]);
+  expect(validateSnapshotV2(failed, { panelId: 7, maxPayloadBytes: 1024 * 1024 })).toEqual([]);
   expect(failed.evaluationStatus).toBe('failed');
-  expect(failed.elements).toEqual([]);
-  expect(failed.metrics.every((metric) => metric.elementIds.length === 0)).toBe(true);
+  expect(failed.indicators).toEqual([]);
+  expect(failed.metrics.every((metric) => metric.indicatorIds.length === 0)).toBe(true);
 });
 
 it('[X26] источник ошибки содержит известные индексы query и не приписывается чужой метрике', async () => {
@@ -461,15 +463,15 @@ it('[X27] explicit selectors сохраняют реальные назначе�
     graph('B', 'second', [95]),
   ]);
   expect(
-    snapshot.elements.map((element) => [
+    snapshot.indicators.map((element) => [
       element.id,
-      snapshot.metrics.find((metric) => metric.id === element.winnerMetricId)?.sources[0].refId,
+      snapshot.metrics.find((metric) => metric.id === element.state.winnerMetricId)?.sources[0].refId,
     ])
   ).toEqual([
     ['cell-a', 'B'],
     ['cell-b', 'A'],
   ]);
-  expect(snapshot.elements.map((element) => element.ruleResults[0].metricIds.length)).toEqual([1, 1]);
+  expect(snapshot.indicators.map((element) => element.ruleResults[0].metricIds.length)).toEqual([1, 1]);
 });
 
 it('[X28] regex сохраняет фактически найденные SVG IDs и исходный selector', async () => {
@@ -483,8 +485,8 @@ it('[X28] regex сохраняет фактически найденные SVG I
     [],
     svg
   );
-  expect(snapshot.elements.map((element) => element.id)).toEqual(['cell-a', 'cell-b']);
-  expect(snapshot.configuration.rules.map((rule) => rule.selector)).toEqual(['cell-.*', 'cell-.*']);
+  expect(snapshot.indicators.map((element) => element.id)).toEqual(['cell-a', 'cell-b']);
+  expect(snapshot.rules.map((rule) => rule.selectors)).toEqual([['cell-.*']]);
 });
 
 it('[X29] независимые autoConfig-правила не склеивают разные серии одного значка', async () => {
@@ -500,7 +502,7 @@ it('[X29] независимые autoConfig-правила не склеиваю
     graph('B2', 'second', [8]),
   ]);
   expect(
-    snapshot.elements.map((element) =>
+    snapshot.indicators.map((element) =>
       element.ruleResults.map((result) =>
         result.metricIds.map((id) => snapshot.metrics.find((metric) => metric.id === id)!.sources[0].refId)
       )
@@ -510,7 +512,7 @@ it('[X29] независимые autoConfig-правила не склеиваю
     [[], ['B2']],
   ]);
   expect(
-    snapshot.metrics.filter((metric) => metric.selectors.refId === 'A1').every((metric) => !metric.elementIds.length)
+    snapshot.metrics.filter((metric) => metric.query.refId === 'A1').every((metric) => !metric.indicatorIds.length)
   ).toBe(true);
 });
 
@@ -543,12 +545,16 @@ it('[X31] равные уровни сохраняют первого winner, а
     graph('A', 'first', [12]),
     graph('B', 'second', [95]),
   ]);
-  expect(snapshot.elements[0].winnerMetricId).toBe(snapshot.metrics[0].id);
+  expect(snapshot.indicators[0].state.winnerMetricId).toBe(snapshot.metrics[0].id);
   const last = await run(
     config('[{refid: A}]').replace(
       'thresholds: [{value: 10, color: red, lvl: 2}]',
       'thresholds: [{value: 10, color: red, lvl: 2}, {value: 0, color: green, lvl: 0}]'
     )
   );
-  expect(last.snapshot.metrics[0].scalar).toMatchObject({ level: 0, color: 'green', selectedThresholdIndex: 1 });
+  expect(last.snapshot.metrics[0].scalar).toMatchObject({
+    level: 0,
+    color: { css: 'green' },
+    appliedThreshold: { index: 1 },
+  });
 });

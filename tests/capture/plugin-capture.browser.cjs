@@ -8,7 +8,7 @@ const { randomBytes } = require('node:crypto');
 const webpack = require('webpack');
 const { chromium } = require('playwright');
 require('ts-node').register({ transpileOnly: true, compilerOptions: { module: 'commonjs' } });
-const { validateSnapshot } = require('../../src/components/capture/testing/validateSnapshot');
+const { validateSnapshotV2 } = require('../../src/components/capture/testing/validateSnapshotV2');
 
 const root = path.resolve(__dirname, '../..');
 const panelId = 7;
@@ -269,6 +269,16 @@ async function main() {
             body: JSON.stringify(queryResult(kind)),
           })
         );
+        if (process.env.PLUGIN_BUNDLE_DIR) {
+          const bundle = path.resolve(process.env.PLUGIN_BUNDLE_DIR);
+          await page.route('**/public/plugins/' + pluginId + '/**/*.js*', (route) => {
+            const name = path.basename(new URL(route.request().url()).pathname);
+            return route.fulfill({
+              contentType: 'application/javascript',
+              body: readFileSync(path.join(bundle, name)),
+            });
+          });
+        }
         if (blockChunk) {
           await page.route(captureChunk, (route) => route.abort('failed'));
         }
@@ -286,7 +296,7 @@ async function main() {
             window.__captureTestCalls = [];
             const record = (name) => window.__captureTestCalls.push(name);
             if (mode === 'getter') {
-              Object.defineProperty(window, '__SVG_MODIFIER_CAPTURE_V1__', {
+              Object.defineProperty(window, '__SVG_MODIFIER_CAPTURE_V2__', {
                 get() {
                   record('getter');
                   throw new Error('Synthetic hook getter failure');
@@ -294,7 +304,7 @@ async function main() {
               });
               return;
             }
-            window.__SVG_MODIFIER_CAPTURE_V1__ = {
+            window.__SVG_MODIFIER_CAPTURE_V2__ = {
               connect() {
                 record('connect');
                 if (mode === 'connect') {
@@ -304,7 +314,7 @@ async function main() {
                   return null;
                 }
                 return {
-                  protocolVersion: 1,
+                  protocolVersion: 2,
                   maxPayloadBytes: 1048576,
                   begin() {
                     record('begin');
@@ -380,7 +390,7 @@ async function main() {
       await page.waitForFunction(() => window.__captureTestReceiver?.read().status.startsWith('terminal-'));
       const state = await page.evaluate(() => window.__captureTestReceiver.read());
       assert.equal(state.status, 'terminal-ok', JSON.stringify(state.error));
-      assert.deepEqual(validateSnapshot(state.snapshot, { panelId, maxPayloadBytes }), []);
+      assert.deepEqual(validateSnapshotV2(state.snapshot, { panelId, maxPayloadBytes }), []);
       assert.equal(state.payloadBytes, Buffer.byteLength(JSON.stringify(state.snapshot), 'utf8'));
       return state.snapshot;
     }
@@ -392,7 +402,7 @@ async function main() {
       { hook: 'absent' },
       async ({ page, requests }) => {
         await visibleValue(page);
-        assert.equal(await page.evaluate(() => '__SVG_MODIFIER_CAPTURE_V1__' in window), false);
+        assert.equal(await page.evaluate(() => '__SVG_MODIFIER_CAPTURE_V2__' in window), false);
         assert.equal(loadedCapture(requests), false);
       }
     );
@@ -412,14 +422,13 @@ async function main() {
         assert.equal(value.metrics[0].scalar.level, 2);
         assert.equal(value.metrics[0].sources[0].fieldName, 'raw_alpha_metric');
         assert.equal(value.metrics[0].sources[0].frameName, 'Synthetic source');
-        assert.equal(value.elements.find((item) => item.id === 'cell-a').label, '95');
-        assert.equal(value.diagram.status, 'rendered');
-        assert.match(value.diagram.items.find((item) => item.svgId === 'cell-a').authoredText, /Service Alpha/);
-        assert.ok(
-          value.diagram.items.some((item) =>
-            item.paints.some((paint) => JSON.stringify(paint.fill?.rgba) === '[255,0,0,1]')
-          )
+        assert.equal(value.schemaVersion, 2);
+        assert.equal('diagram' in value, false);
+        assert.equal(
+          value.objects.some((o) => o.name?.text === '95'),
+          false
         );
+        assert.ok(value.indicators[0].appearance.some((p) => JSON.stringify(p.fill?.rgba) === '[255,0,0,1]'));
       }
     );
     await scenario(
@@ -429,6 +438,7 @@ async function main() {
       async ({ page }) => {
         await visibleValue(page);
         const first = await snapshot(page);
+        const firstWidth = await page.locator('#cell-a').evaluate((n) => n.getBoundingClientRect().width);
         const count = await page.evaluate(() => window.__captureTestFormulaCount);
         assert.ok(count > 0);
         await page.setViewportSize({ width: 700, height: 450 });
@@ -437,22 +447,24 @@ async function main() {
           return state.status === 'terminal-ok' && state.generation > generation;
         }, first.observed.generation);
         const resized = await snapshot(page);
-        assert.notDeepEqual(resized.diagram.viewport, first.diagram.viewport);
-        assert.notDeepEqual(
-          resized.diagram.items.find((item) => item.svgId === 'cell-a').bounds,
-          first.diagram.items.find((item) => item.svgId === 'cell-a').bounds
-        );
+        assert.notEqual(await page.locator('#cell-a').evaluate((n) => n.getBoundingClientRect().width), firstWidth);
         assert.equal(await page.evaluate(() => window.__captureTestFormulaCount), count);
         assert.equal(resized.metrics[0].scalar.value, 95);
       }
     );
-    await scenario('B04', 'grid publishes terminal snapshot without SVG DOM', { kind: 'grid' }, async ({ page }) => {
-      const value = await snapshot(page);
-      assert.equal(value.panel.mode, 'grid');
-      assert.equal(value.diagram.status, 'not_rendered');
-      assert.equal(value.metrics[0].scalar.value, 95);
-      assert.equal(await page.locator('#cell-a').count(), 0);
-    });
+    await scenario(
+      'B04',
+      'grid reports unsupported mode without hidden SVG DOM',
+      { kind: 'grid' },
+      async ({ page }) => {
+        await page.waitForFunction(() => window.__captureTestReceiver.read().status === 'terminal-error');
+        assert.equal(
+          (await page.evaluate(() => window.__captureTestReceiver.read())).error.code,
+          'CAPTURE_MODE_UNSUPPORTED'
+        );
+        assert.equal(await page.locator('#cell-a').count(), 0);
+      }
+    );
     for (const [id, kind] of [
       ['B05', 'yaml'],
       ['B06', 'svg'],
@@ -460,7 +472,7 @@ async function main() {
       await scenario(id, 'invalid ' + kind + ' produces a terminal diagnostic snapshot', { kind }, async ({ page }) => {
         const value = await snapshot(page);
         assert.equal(value.evaluationStatus, 'invalid_configuration');
-        assert.equal(value.configuration[kind + 'Status'], 'invalid');
+        assert.equal(value.configurationStatus[kind], 'invalid');
         assert.ok(value.diagnostics.length > 0);
       });
     }
@@ -480,12 +492,12 @@ async function main() {
       { kind: 'missing' },
       async ({ page }) => {
         const value = await snapshot(page);
-        const missing = value.metrics.find((metric) => metric.selectors.refId === 'MISSING');
+        const missing = value.metrics.find((metric) => metric.query.refId === 'MISSING');
         assert.ok(missing);
         assert.equal(missing.availability, 'unavailable');
         assert.equal(missing.scalar, null);
         assert.ok(missing.diagnosticIds.length > 0);
-        assert.equal(value.elements[0].winnerMetricId, null);
+        assert.equal(value.indicators[0].state.winnerMetricId, null);
       }
     );
     for (const [id, hook] of [
@@ -549,7 +561,7 @@ async function main() {
         const value = await snapshot(page);
         assert.ok(value.diagnostics.some((d) => d.code === 'MISSING_INPUT'));
         assert.ok(value.diagnostics.some((d) => d.code === 'MISSING_VALUE'));
-        assert.ok(value.elements[0].noData);
+        assert.ok(value.indicators[0].state.noData);
         assert.equal(
           await page.locator('#cell-a rect').evaluate((el) => getComputedStyle(el).fill),
           'rgb(142, 142, 142)'
@@ -608,7 +620,7 @@ async function main() {
         await pinned.getByText('10', { exact: true }).waitFor();
         assert.equal(await pinned.getByText('Нет данных для определения состояния', { exact: true }).count(), 0);
         assert.equal(await page.locator('#cell-a rect').evaluate((el) => getComputedStyle(el).fill), 'rgb(0, 128, 0)');
-        assert.equal((await snapshot(page)).metrics.find((metric) => metric.selectors.refId === 'A').scalar.value, 10);
+        assert.equal((await snapshot(page)).metrics.find((metric) => metric.query.refId === 'A').scalar.value, 10);
       }
     );
   } finally {

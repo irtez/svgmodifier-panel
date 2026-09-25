@@ -77,15 +77,21 @@ export function buildSnapshotV2(input: SnapshotInputV2): SvgModifierSnapshotV2 {
       ...stringProperty('title', authored.attributes.title),
       indicatorIds: [],
       queries: settings.flatMap((m, metricsIndex) =>
-        (m.queries ?? []).map((q, queryIndex) => ({
-          metricsIndex,
-          queryIndex,
-          ...stringProperty('refId', q.refid),
-          ...stringProperty('legend', q.legend),
-          ...stringProperty('label', q.label ?? m.label),
-          ...stringProperty('title', q.title ?? m.title),
-          ...stringProperty('sum', q.sum),
-        }))
+        (Array.isArray(m?.queries) ? m.queries : []).flatMap((q, queryIndex) =>
+          q && typeof q === 'object' && !Array.isArray(q)
+            ? [
+                {
+                  metricsIndex,
+                  queryIndex,
+                  ...stringProperty('refId', q.refid),
+                  ...stringProperty('legend', q.legend),
+                  ...stringProperty('label', q.label ?? m.label),
+                  ...stringProperty('title', q.title ?? m.title),
+                  ...stringProperty('sum', q.sum),
+                },
+              ]
+            : []
+        )
       ),
       navigation: navigation(authored.attributes.link, 'declared', id),
       diagnosticIds: [],

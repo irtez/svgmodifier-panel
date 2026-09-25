@@ -5,6 +5,26 @@ import { validateSnapshotV2 } from './testing/validateSnapshotV2';
 afterEach(() => {
   document.body.replaceChildren();
 });
+
+it.each(['wrong', '[null, {refid: A}]', '{refid: A}'])(
+  '[V28] malformed query declarations %s still export diagnostics',
+  async (queries) => {
+    const run = await evaluateFixture({ yaml: config(queries) });
+    const snapshot = buildSnapshotV2({ ...run.input, root: null });
+    expect(validateSnapshotV2(snapshot, { panelId: 7, maxPayloadBytes: 4 * 1024 * 1024 })).toEqual([]);
+    expect(snapshot.diagnostics.length).toBeGreaterThan(0);
+  }
+);
+
+it('[V29] two selectors from the same rule may select different winners for one target', async () => {
+  const { snapshot } = await build({
+    yaml: config('[{refid: A}, {refid: B}]').replace('id: a', 'id: ["a:@1", "a:@2"]'),
+    frames: [graph('A', 'first', [1]), graph('B', 'second', [99])],
+  });
+  expect(snapshot.indicators[0].ruleResults).toHaveLength(2);
+  const winner = snapshot.metrics.find((m) => m.id === snapshot.indicators[0].state.winnerMetricId);
+  expect(winner?.scalar?.value).toBe(99);
+});
 const build = async (options: Parameters<typeof evaluateFixture>[0] = {}) => {
   const run = await evaluateFixture(options),
     // Layout is covered in Chromium; jsdom has no rendered SVG bounds.

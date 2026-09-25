@@ -1,4 +1,5 @@
-import type { JsonObject, JsonValue } from './models';
+import type { JsonValueV2 as JsonValue } from './modelsV2';
+type JsonObject = Record<string, JsonValue>;
 
 /** Не вызывает toJSON/getter и не превращает неподходящие значения в ноль. */
 export function copyJson(value: unknown, issue: () => void, ancestors = new Set<object>()): JsonValue {
