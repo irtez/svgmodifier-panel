@@ -21,6 +21,7 @@ import { capturePaint } from './colors';
 import { DiagnosticIndexV2, addIds, sourceLocation } from './diagnosticsV2';
 import { captureTooltip } from './tooltipV2';
 import { copyJson } from './jsonValues';
+import { collectMapObjects } from './mapObjects';
 
 export interface SnapshotInputV2 {
   trace: EvaluationTrace;
@@ -439,7 +440,18 @@ export function buildSnapshotV2(input: SnapshotInputV2): SvgModifierSnapshotV2 {
     observed: input.observed,
     evaluationStatus: input.evaluationStatus,
     configurationStatus: input.configurationStatus,
-    objects: [],
+    objects: collectMapObjects({
+      root: input.root,
+      targets: input.prepared.elementsById,
+      indicators,
+      dynamicText: new Set(
+        evaluation.elements.flatMap((element) => {
+          const node = input.prepared.elementsById.get(element.id);
+          return node && element.selectedAttributes && 'label' in element.selectedAttributes ? [node] : [];
+        })
+      ),
+      navigation: (url) => navigation(url, 'applied'),
+    }),
     indicators,
     rules,
     metrics,

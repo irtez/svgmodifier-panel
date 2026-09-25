@@ -7,7 +7,8 @@ afterEach(() => {
 });
 const build = async (options: Parameters<typeof evaluateFixture>[0] = {}) => {
   const run = await evaluateFixture(options),
-    snapshot = buildSnapshotV2(run.input);
+    // Layout is covered in Chromium; jsdom has no rendered SVG bounds.
+    snapshot = buildSnapshotV2({ ...run.input, root: null });
   expect(validateSnapshotV2(snapshot, { panelId: 7, maxPayloadBytes: 4 * 1024 * 1024 })).toEqual([]);
   return { ...run, snapshot };
 };
