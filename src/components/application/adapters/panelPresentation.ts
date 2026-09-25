@@ -27,7 +27,7 @@ export interface PanelPresentation {
   dataSourceMap: Map<string, Set<string>> | undefined;
 }
 
-const NO_DATA_COLOR = '#8e8e8e';
+export const NO_DATA_COLOR = '#8e8e8e';
 
 export function buildPanelPresentation(
   evaluation: PanelEvaluation,

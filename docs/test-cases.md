@@ -11,6 +11,16 @@
 | V05 | Dangling/duplicate IDs, invalid winner, cycles, conflicting availability | Нарушение ссылочной целостности или состояния отклоняется | [contractV2.test.ts](../src/components/capture/contractV2.test.ts) |
 | V06 | NaN/Infinity/undefined, wrong version, legacy fields, invalid RGBA | Ответ не проходит JSON/schema/state validation | [contractV2.test.ts](../src/components/capture/contractV2.test.ts) |
 | V07 | UTF-8 exact byte boundary и другой panel ID | Равенство лимиту допустимо, превышение и чужая identity отклоняются | [contractV2.test.ts](../src/components/capture/contractV2.test.ts) |
+| V08 | Raw 12.34567, display 12.35, missing query | Сохраняются точность, origins, выбранный порог/default operator и диагностика | [snapshotV2.test.ts](../src/components/capture/snapshotV2.test.ts) |
+| V09 | Один authored rule рассчитывается для двух targets | Один эквивалентный metric result, отдельные индикаторы и ссылки назначений | [snapshotV2.test.ts](../src/components/capture/snapshotV2.test.ts) |
+| V10 | Одинаковые значения разных queries или refid/legend occurrences | Результаты не сливаются только по числу; multiplicity сохраняется | [snapshotV2.test.ts](../src/components/capture/snapshotV2.test.ts) |
+| V11 | Красный ноль скрыт hideZeros | Причина цвета остаётся в metrics/state, tooltip помечен empty | [snapshotV2.test.ts](../src/components/capture/snapshotV2.test.ts) |
+| V12 | Одинаковые labels и UI sort ascending | Tooltip сохраняет точные IDs после сортировки, winner не меняется | [snapshotV2.test.ts](../src/components/capture/snapshotV2.test.ts) |
+| V13 | Таблица с фильтром и одинаковыми именами строк | Source indices 1/2 и UI order 1/0 различаются и сохраняются | [snapshotV2.test.ts](../src/components/capture/snapshotV2.test.ts) |
+| V14 | Rule не привязан к SVG | Queries/title/link и ошибка остаются, вычисленный metric не выдумывается | [snapshotV2.test.ts](../src/components/capture/snapshotV2.test.ts) |
+| V15 | Expression failures и подавление no-data tooltip | Полные причины/выражения доступны, UI mute не урезает API | [snapshotV2.test.ts](../src/components/capture/snapshotV2.test.ts) |
+| V16 | Некорректный YAML | Есть invalid_configuration и диагностика, сериализация успешна | [snapshotV2.test.ts](../src/components/capture/snapshotV2.test.ts) |
+| V17 | Capture включён/выключен; позднее изменение evaluator-данных | Обычный расчёт/tooltip одинаковы, снятый JSON отделён от mutable run | [snapshotV2.test.ts](../src/components/capture/snapshotV2.test.ts) |
 
 Это постоянный каталог проверяемого поведения плагина. ID стабилен: он нужен для связи обсуждения, теста и изменения поведения. «Покрыт» означает ссылку на автоматический тест; «ожидает» означает, что сценарий принят в контракт, но тест ещё должен быть добавлен.
 
