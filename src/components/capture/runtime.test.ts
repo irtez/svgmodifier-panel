@@ -72,3 +72,19 @@ it('[S22] waits for fonts and does not resurrect an obsolete generation', async 
   expect(state.published.map((s) => s.observed.generation)).toEqual([2]);
   state.connection.close();
 });
+
+it('[S23] exposes a bounded traversal failure without leaking arbitrary exception text', async () => {
+  const { input } = await evaluateFixture(),
+    state = hook(4 * 1024 * 1024);
+  let node = input.root!;
+  for (let i = 0; i < 258; i++) {
+    const next = node.ownerDocument.createElement('g');
+    node.appendChild(next);
+    node = next;
+  }
+  createPublication(state.connection.begin(input.observed), input).commit(input.root, 'a');
+  await flush();
+  expect(state.errors).toEqual(['CAPTURE_SVG_COMPLEXITY_LIMIT']);
+  expect(state.published).toEqual([]);
+  state.connection.close();
+});

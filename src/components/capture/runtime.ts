@@ -61,11 +61,24 @@ export function createPublication(initial: CaptureTicket, input: PublicationInpu
             return;
           }
           current.publish(() => {
-            const snapshot = buildSnapshotV2({
-              ...input,
-              root,
-              observed: { ...input.observed, generation: current.generation },
-            });
+            let snapshot;
+            try {
+              snapshot = buildSnapshotV2({
+                ...input,
+                root,
+                observed: { ...input.observed, generation: current.generation },
+              });
+            } catch (error) {
+              const code = error instanceof Error ? error.message : '';
+              if (
+                ['CAPTURE_SVG_COMPLEXITY_LIMIT', 'CAPTURE_SVG_TEXT_LIMIT', 'CAPTURE_SVG_INVALID_GEOMETRY'].includes(
+                  code
+                )
+              ) {
+                current.fail(code);
+              }
+              throw error;
+            }
             if (new Blob([JSON.stringify(snapshot)]).size > current.connection.maxPayloadBytes) {
               current.fail('CAPTURE_PAYLOAD_TOO_LARGE');
               throw new Error('CAPTURE_PAYLOAD_TOO_LARGE');

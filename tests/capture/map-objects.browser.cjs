@@ -20,6 +20,20 @@ const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="800" height="400" vi
  <g data-cell-id="stretched"><rect x="520" width="100" height="35" fill="gray"/><foreignObject x="520" width="260" height="35"><div xmlns="http://www.w3.org/1999/xhtml" style="width:max-content">Small card</div></foreignObject></g>
  <g id="cell-outside"><circle cx="740" cy="15" r="5"/></g>
  <text x="5" y="190">Static caption</text>
+ <g data-cell-id="table-row"><rect x="5" y="290" width="250" height="50" fill="none" stroke="none"/><text x="10" y="320">Row name</text></g>
+ <g id="cell-number-a"><rect x="100" y="300" width="50" height="30" fill="gray"/><text x="110" y="320">0</text></g>
+ <g id="cell-number-b"><rect x="160" y="300" width="50" height="30" fill="gray"/><text x="170" y="320">1</text></g>
+ <g data-cell-id="wrapped"><rect x="520" y="150" width="130" height="80" fill="gray"/><foreignObject x="525" y="155" width="90" height="60"><div xmlns="http://www.w3.org/1999/xhtml" style="font:16px Arial">Gateway service</div></foreignObject></g>
+ <circle id="cell-wrapped" cx="635" cy="175" r="5" fill="red"/>
+ <text y="235"><tspan id="cell-span-a" fill="red">Alpha</tspan><tspan id="cell-span-b" x="160" fill="blue">Beta</tspan></text>
+ <text id="cell-mixed" y="265"><tspan fill="red">Red </tspan><tspan fill="blue">Blue</tspan></text>
+ <g data-cell-id="transparent"><rect x="300" y="250" width="150" height="40" fill="gray"/><text x="310" y="275" fill-opacity="0">Hidden fallback</text></g>
+ <circle id="cell-transparent" cx="435" cy="270" r="5" fill="green"/>
+ <g data-cell-id="not-drawn"><rect x="520" y="270" width="200" height="40" fill="none" stroke="none"/><text x="530" y="295">No enclosure</text></g>
+ <circle id="cell-not-drawn" cx="705" cy="290" r="5" fill="green"/>
+ <defs><symbol id="icon"><circle cx="5" cy="5" r="5" fill="green"/></symbol></defs><use id="cell-use" href="#icon" x="5" y="320" fill="red"/>
+ <defs><clipPath id="clip"><rect width="1" height="1"/></clipPath></defs><g id="cell-clipped"><rect x="300" y="320" width="170" height="50" fill="gray"/><text x="310" y="345" clip-path="url(#clip)">Clipped label</text></g>
+ <a href="/d/original/view"><g id="cell-linked"><circle cx="540" cy="350" r="5" fill="green"/></g></a>
  </svg>`;
 
 async function compile() {
@@ -61,6 +75,7 @@ async function main() {
     await page.evaluate((svg) => {
       document.getElementById('host').innerHTML = svg;
       document.getElementById('other').innerHTML = svg.replace('Own name', 'Other panel');
+      MapTest.updateLinkForElement(document.querySelector('#host #cell-linked'), '/d/override/view');
       window.collect = () => {
         const root = document.querySelector('#host svg');
         const targets = new Map([...root.querySelectorAll('[id^="cell-"]')].map((n) => [n.id, n]));
@@ -79,7 +94,7 @@ async function main() {
           targets,
           dynamicText: new Set([targets.get('cell-dynamic')]),
           indicators,
-          navigation: (url) => [{ linkId: url, use: 'applied' }],
+          navigation: (url, use = 'applied') => [{ linkId: url, use }],
         });
         return { objects, indicators, mutated: before !== root.outerHTML };
       };
@@ -156,6 +171,52 @@ async function main() {
       data = await page.evaluate(() => collect());
       assert.deepEqual(names('cell-alpha'), ['Renamed']);
       assert.deepEqual(names('cell-beta'), ['Beta']);
+    });
+    await check('V30 automatic wrap stays one logical label', () =>
+      assert.deepEqual(names('cell-wrapped'), ['Gateway service'])
+    );
+    await check('V31 separate tspan targets and mixed text paints retain ownership', () => {
+      assert.deepEqual(names('cell-span-a'), ['Alpha']);
+      assert.deepEqual(names('cell-span-b'), ['Beta']);
+      assert.equal(indicator('cell-span-b').visible, true);
+      const fills = indicator('cell-mixed').appearance.map((p) => JSON.stringify(p.fill?.rgba));
+      assert.ok(fills.includes('[255,0,0,1]') && fills.includes('[0,0,255,1]'));
+    });
+    await check('V32 transparent label or unpainted enclosure is not visual evidence', () => {
+      assert.equal(
+        data.objects.some((o) => o.name?.text === 'Hidden fallback'),
+        false
+      );
+      assert.deepEqual(names('cell-transparent'), []);
+      assert.deepEqual(names('cell-not-drawn'), []);
+    });
+    await check('V33 use shadow paint is not guessed from the instance style', () => {
+      assert.equal(indicator('cell-use').visible, true);
+      assert.deepEqual(indicator('cell-use').appearance, []);
+    });
+    await check('V35 unsupported clipping does not produce a visible name', () => {
+      assert.equal(
+        data.objects.some((o) => o.name?.text === 'Clipped label'),
+        false
+      );
+      assert.deepEqual(names('cell-clipped'), []);
+    });
+    await check('V36 original SVG and overridden applied links remain separate', () => {
+      assert.ok(
+        indicator('cell-linked').navigation.some((n) => n.linkId === '/d/original/view' && n.use === 'declared')
+      );
+      assert.ok(
+        indicator('cell-linked').navigation.some((n) => n.linkId === '/d/override/view' && n.use === 'applied')
+      );
+    });
+    await check('V37 table row needs repeated visible cells, not only an invisible box', () => {
+      const objects = ['cell-number-a', 'cell-number-b'].map((id) =>
+        data.objects.find((o) => o.id === indicator(id).objectIds[0])
+      );
+      assert.ok(objects[0].parentId);
+      assert.equal(objects[0].parentId, objects[1].parentId);
+      assert.equal(data.objects.find((o) => o.id === objects[0].parentId).name.text, 'Row name');
+      assert.deepEqual(names('cell-not-drawn'), []);
     });
     for (const result of results) process.stdout.write(JSON.stringify(result) + '\n');
     assert.equal(results.filter((r) => !r.ok).length, 0);

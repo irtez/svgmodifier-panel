@@ -82,6 +82,14 @@ UI hideZeros/sort; одинаковые labels и значения не заме
 Несколько кандидатов дают ambiguous, отсутствие — unresolved. Проблемы с
 именем не удаляют метрики, tooltip и ссылки. Динамически заменённый текст
 не объявляется названием сервиса. Статические подписи остаются аннотациями.
+Автоматический перенос одного текста не создаёт несколько имён; отдельные
+tspan targets сохраняют собственные связи и цвета. Прозрачный текст не считается
+видимым. Clip-path/mask не анализируются попиксельно: недостоверные подписи
+пропускаются с CAPTURE_VISIBILITY_UNCERTAIN; при неопределимой видимости target
+visible=null. Paint внутреннего shadow tree use не угадывается по стилю экземпляра.
+У SVG-таблицы невидимая служебная рамка подписи может задать область строки,
+только если в ней есть несколько отдельных видимых ячеек на одной строке.
+Такая родительская связь помечается inferred; одной невидимой фигуры недостаточно.
 
 Геометрия нужна только collector и не передаётся по API. Декоративные линии
 не экспортируются; линия с правилом остаётся indicator без выдуманных концов.
@@ -92,6 +100,10 @@ Navigation различает declared/prepared/applied ссылки. URL сох
 HTTP(S) текущей Grafana с её subpath: dashboard UID, panel ID и пары query
 параметров, включая повторы. Внешняя/небезопасная ссылка остаётся непрозрачной;
 повтор panelId не выбирается произвольно. Формулы/текст/URL — недоверенные данные.
+Declared без ruleId обозначает исходную SVG-ссылку, в том числе сохранённую
+updater при override; declared с ruleId — декларацию YAML. Некорректные типы
+полей не отменяют весь снимок: поле опускается/null и добавляется
+CAPTURE_INVALID_VALUE. Числовой текст tooltip сохраняется строкой, как в UI.
 
 ## Подключение и ограничения
 
@@ -120,6 +132,8 @@ hook, endpoint, polling или новый сетевой канал. Hook пре
 даёт CAPTURE_PAYLOAD_TOO_LARGE без успешного усечения. Отдельные safety bounds
 collector: 50 000 DOM nodes, глубина 256, 1 000 000 символов измеряемого текста.
 Это пределы обхода, не скрытая квота сериализованного SVG.
+Они возвращают CAPTURE_SVG_COMPLEXITY_LIMIT/CAPTURE_SVG_TEXT_LIMIT;
+неконечная геометрия — CAPTURE_SVG_INVALID_GEOMETRY.
 
 Receiver должен проверить JSON Schema, ссылочную целостность и winners,
 panel identity, актуальные instance/generation и byte limit. Повторы одного
@@ -136,3 +150,6 @@ panel ID — ошибка неоднозначности. Batch registry, layout
 `GRAFANA_URL=http://localhost:PORT npm run test:capture:plugin` — отдельная
 browser-проба настоящего frontend и операций панели. Тестовый receiver не входит
 в production bundle и не доказывает работу Grafana → renderer HTTP transport.
+Harness создаёт/удаляет только собственные синтетические dashboard/datasource.
+`PLUGIN_BUNDLE_DIR=/absolute/build/path` позволяет подменить JS только в тестовом
+браузере, не заменяя установленный bundle.

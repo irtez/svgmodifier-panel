@@ -13,6 +13,7 @@ import type {
   MetricV2,
   NavigationV2,
   RuleV2,
+  SourceLocationV2,
   SvgModifierSnapshotV2,
   TableV2,
 } from './modelsV2';
@@ -128,12 +129,32 @@ export function buildSnapshotV2(input: SnapshotInputV2): SvgModifierSnapshotV2 {
         const indicatorIds = run.assigned.has(result.slot) && existing.has(run.elementId) ? [run.elementId] : [];
         const context = { indicatorIds, ruleIds: [rule.id] };
         const diagnosticIds: string[] = [];
-        const diag = (items: Diagnostic[]) => {
-          const ids = items.map((d) => diagnostics.add(d, context));
+        const diag = (items: Diagnostic[], extra: Partial<SourceLocationV2> = {}) => {
+          const ids = items.map((d) => diagnostics.add(d, context, extra));
           addIds(diagnosticIds, ids);
           return [...new Set(ids)];
         };
         diag(result.slot.diagnostics);
+        const text = (value: unknown, field: string): string | null => {
+          if (value == null) {
+            return null;
+          }
+          if (typeof value === 'string') {
+            return value;
+          }
+          diag(
+            [
+              {
+                code: 'CAPTURE_INVALID_VALUE',
+                severity: 'warning',
+                message: `Поле ${field} опущено: ожидалась строка`,
+                source: run.prepared.source,
+              },
+            ],
+            { metricsIndex: query.metricsIndex, queryIndex: query.queryIndex }
+          );
+          return null;
+        };
         if (unsafeSettings) {
           diag([
             {
@@ -167,11 +188,12 @@ export function buildSnapshotV2(input: SnapshotInputV2): SvgModifierSnapshotV2 {
           const index = recorded?.selectedThresholdIndex ?? null;
           const threshold = index === null ? undefined : query.settings.thresholds?.[index];
           const check = recorded?.checks.find((c) => c.index === index);
+          const css = text(color, 'color');
           return {
             value,
             displayValue: displayValue ?? null,
             level: level ?? null,
-            color: color === undefined ? null : capturePaint(color),
+            color: css === null ? null : capturePaint(css),
             appliedThreshold:
               threshold && index !== null
                 ? {
@@ -179,10 +201,10 @@ export function buildSnapshotV2(input: SnapshotInputV2): SvgModifierSnapshotV2 {
                     value: copyJson(threshold.value, () => {
                       throw new Error('CAPTURE_THRESHOLD_INVALID');
                     }) as JsonValueV2,
-                    operator: threshold.operator || '>=',
+                    operator: text(threshold.operator, 'threshold.operator') || '>=',
                     level: threshold.lvl ?? index + 1,
                     color: typeof threshold.color === 'string' ? capturePaint(threshold.color) : null,
-                    condition: threshold.condition ?? null,
+                    condition: text(threshold.condition, 'threshold.condition'),
                     inputs: inputs(check?.inputs ?? [], check?.diagnostics ?? []),
                     diagnosticIds: diag(check?.diagnostics ?? []),
                   }
@@ -393,7 +415,7 @@ export function buildSnapshotV2(input: SnapshotInputV2): SvgModifierSnapshotV2 {
           element.winner && 'winningRowIndex' in element.winner ? element.winner.winningRowIndex ?? null : null,
         color: element.noData
           ? capturePaint(NO_DATA_COLOR)
-          : element.winner?.color === undefined
+          : typeof element.winner?.color !== 'string'
           ? null
           : capturePaint(element.winner.color),
         level: element.winner?.lvl ?? null,
@@ -456,7 +478,14 @@ export function buildSnapshotV2(input: SnapshotInputV2): SvgModifierSnapshotV2 {
           return node && element.selectedAttributes && 'label' in element.selectedAttributes ? [node] : [];
         })
       ),
-      navigation: (url) => navigation(url, 'applied'),
+      navigation: (url, use = 'applied') => navigation(url, use),
+      uncertainVisibility: () => {
+        diagnostics.add({
+          code: 'CAPTURE_VISIBILITY_UNCERTAIN',
+          severity: 'warning',
+          message: 'Подписи под clip-path или mask пропущены: видимость не определена',
+        });
+      },
     }),
     indicators,
     rules,

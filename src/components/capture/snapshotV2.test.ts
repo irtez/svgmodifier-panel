@@ -170,3 +170,14 @@ it('[V17] does not change evaluator results, source precision or displayed toolt
   captured.input.evaluation.diagnostics!.push({ code: 'LATER', severity: 'warning', message: 'Later update' });
   expect(JSON.stringify(snapshot)).toBe(saved);
 });
+
+it.each([
+  ['boolean condition', config('[{refid: A}]').replace('lvl: 2', 'lvl: 2, condition: false')],
+  ['numeric color', config('[{refid: A}]').replace('color: red', 'color: 123')],
+  ['numeric selector', config('[{refid: 7}]')],
+  ['non-string tooltip text', config('[{refid: A}]').replace('show: true', 'show: true, textAbove: [7, title]')],
+  ['numeric table title', config('[{refid: T}]', 'title: 123')],
+])('[V34] malformed %s preserves a valid diagnostic snapshot', async (_name, yaml) => {
+  const { snapshot } = await build({ yaml, frames: [graph('A', 'value', [95]), table()] });
+  expect(snapshot.diagnostics.some((d) => d.code === 'CAPTURE_INVALID_VALUE')).toBe(true);
+});

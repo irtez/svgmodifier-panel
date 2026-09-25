@@ -9,6 +9,7 @@ export interface Box {
 }
 export interface TextRow {
   node: Element;
+  nodes: Element[];
   flow: Element;
   text: string;
   box: Box;
@@ -42,6 +43,8 @@ export class MapMeasurements {
   private styles = new Map<Element, CSSStyleDeclaration>();
   private layouts = new Map<Element, boolean>();
   private opacities = new Map<Element, number>();
+  private effects = new Map<Element, boolean>();
+  hasUncertainVisibility = false;
   constructor(readonly root: Element) {}
   style(node: Element) {
     if (!this.styles.has(node)) {
@@ -75,6 +78,34 @@ export class MapMeasurements {
       !['hidden', 'collapse'].includes(this.style(node).visibility)
     );
   }
+  painted(node: Element, text = false): boolean {
+    const style = this.style(node);
+    const solidOrUnknown = (css: string) => {
+      const paint = capturePaint(css);
+      return paint.kind !== 'none' && (paint.rgba === null || paint.rgba[3] > 0);
+    };
+    if (node.namespaceURI !== 'http://www.w3.org/2000/svg') {
+      return solidOrUnknown(style.color) || (!!style.textShadow && style.textShadow !== 'none');
+    }
+    if (!text && ['image', 'use'].includes(node.localName)) {
+      return true;
+    }
+    return (
+      (number(style.fillOpacity) > 0 && solidOrUnknown(style.fill)) ||
+      (number(style.strokeOpacity) > 0 && parseFloat(style.strokeWidth || '1') > 0 && solidOrUnknown(style.stroke))
+    );
+  }
+  uncertain(node: Element): boolean {
+    if (!this.effects.has(node)) {
+      const style = this.style(node);
+      const uncertain =
+        [style.clipPath, style.maskImage].some((value) => !!value && value !== 'none') ||
+        (!!node.parentElement && this.uncertain(node.parentElement));
+      this.effects.set(node, uncertain);
+      this.hasUncertainVisibility ||= uncertain;
+    }
+    return this.effects.get(node)!;
+  }
   box(rect: DOMRect): Box {
     const { x, y, width, height } = rect;
     if (![x, y, width, height].every(Number.isFinite)) {
@@ -104,19 +135,43 @@ export class MapMeasurements {
   }
   figures(nodes: Element[]) {
     return nodes
-      .filter((n) => shapes.has(n.localName) && this.visible(n) && n.getClientRects().length)
+      .filter(
+        (n) =>
+          shapes.has(n.localName) &&
+          this.visible(n) &&
+          !this.uncertain(n) &&
+          this.painted(n) &&
+          n.getClientRects().length
+      )
       .map((node) => ({ node, box: this.box(node.getBoundingClientRect()) }));
   }
-  texts(nodes: Element[]): TextRow[] {
-    const fragments: TextRow[] = [];
+  texts(nodes: Element[], targets: ReadonlySet<Element>): TextRow[] {
+    type Fragment = TextRow & { owner: Element | null; block: Element };
+    const fragments: Fragment[] = [];
     let chars = 0;
     for (const parent of nodes) {
-      if (!this.visible(parent) || parent.closest('title,desc')) {
+      if (
+        !this.visible(parent) ||
+        this.uncertain(parent) ||
+        !this.painted(parent, true) ||
+        parent.closest('title,desc')
+      ) {
         continue;
       }
       const flow = parent.closest('text,foreignObject');
       if (!flow || !this.root.contains(flow)) {
         continue;
+      }
+      let owner: Element | null = parent;
+      while (owner && this.root.contains(owner) && !targets.has(owner)) {
+        owner = owner.parentElement;
+      }
+      if (owner && !this.root.contains(owner)) {
+        owner = null;
+      }
+      let block = parent;
+      while (block !== flow && this.style(block).display === 'inline' && block.parentElement) {
+        block = block.parentElement;
       }
       for (const node of Array.from(parent.childNodes)) {
         if (node.nodeType !== 3 || !node.textContent?.trim()) {
@@ -133,33 +188,33 @@ export class MapMeasurements {
           continue;
         }
         const rects = Array.from(range.getClientRects()).filter((r) => r.width > 0 && r.height > 0);
-        if (rects.length === 1) {
-          fragments.push({ node: parent, flow, text: node.textContent, box: this.box(rects[0]) });
-        } else if (rects.length > 1) {
-          // Split only wrapped text nodes; a wide foreignObject is not a label's box.
-          let offset = 0;
-          for (const char of node.textContent) {
-            range.setStart(node, offset);
-            offset += char.length;
-            range.setEnd(node, offset);
-            const rect = Array.from(range.getClientRects()).find((r) => r.width > 0 && r.height > 0);
-            if (rect) {
-              fragments.push({ node: parent, flow, text: char, box: this.box(rect) });
-            }
-          }
+        if (rects.length) {
+          // Automatic wrapping does not turn one authored text node into several names.
+          fragments.push({
+            node: parent,
+            nodes: [parent],
+            flow,
+            owner,
+            block,
+            text: node.textContent,
+            box: union(rects.map((r) => this.box(r)))!,
+          });
         }
       }
     }
-    const rows: TextRow[] = [];
+    const rows: Fragment[] = [];
     for (const f of fragments) {
       const last = rows[rows.length - 1];
       if (
         last &&
         last.flow === f.flow &&
+        last.owner === f.owner &&
+        last.block === f.block &&
         Math.abs(last.box.y - f.box.y) < Math.min(last.box.height, f.box.height) * 0.35
       ) {
         last.text += f.text;
         last.box = union([last.box, f.box])!;
+        last.nodes.push(...f.nodes);
       } else {
         rows.push({ ...f });
       }
@@ -185,6 +240,28 @@ export class MapMeasurements {
 export function appliedHref(node: Element, root: Element): string | null {
   for (let n: Element | null = node; n && root.contains(n); n = n.parentElement) {
     if (n.localName === 'a') {
+      return n.getAttribute('href') ?? n.getAttributeNS('http://www.w3.org/1999/xlink', 'href');
+    }
+  }
+  return null;
+}
+
+/** Updater stores authored href before overriding it; its generated wrappers are not declarations. */
+export function declaredHref(node: Element, root: Element): string | null {
+  let generated: Element | null = null;
+  for (let n: Element | null = node; n && root.contains(n); n = n.parentElement) {
+    const original = n.getAttribute('data-original-link-href-present');
+    if (original === 'true') {
+      return n.getAttribute('data-original-link-href');
+    }
+    if (original === 'false') {
+      const anchor = n.localName === 'a' ? n : n.parentElement;
+      return anchor?.getAttributeNS('http://www.w3.org/1999/xlink', 'href') ?? null;
+    }
+    if (n.getAttribute('data-has-link') === 'true') {
+      generated = n.parentElement;
+    }
+    if (n.localName === 'a' && n !== generated) {
       return n.getAttribute('href') ?? n.getAttributeNS('http://www.w3.org/1999/xlink', 'href');
     }
   }

@@ -202,7 +202,13 @@ async function main() {
     async function scenario(
       id,
       name,
-      { kind = 'svg-normal', hook = 'accepted', blockChunk = false, receiverLimit = maxPayloadBytes } = {},
+      {
+        kind = 'svg-normal',
+        hook = 'accepted',
+        blockChunk = false,
+        receiverLimit = maxPayloadBytes,
+        pair = false,
+      } = {},
       check
     ) {
       let context;
@@ -247,6 +253,16 @@ async function main() {
           overwrite: false,
         });
         dashboards.push(uid);
+        if (pair) {
+          const copy = (await api('GET', '/api/dashboards/uid/' + uid)).dashboard;
+          copy.panels[0].gridPos.h = 6;
+          const second = structuredClone(copy.panels[0]);
+          second.id = 8;
+          second.gridPos.y = 6;
+          second.options.jsonData.metricsMapping[0].code = fixtureYaml.replace('color: red', 'color: yellow');
+          copy.panels.push(second);
+          await api('POST', '/api/dashboards/db', { dashboard: copy, overwrite: true });
+        }
         context = await browser.newContext({ viewport: { width: 1000, height: 700 }, locale: 'en-US' });
         if (headers.Authorization) {
           await context.route('**/*', (route) =>
@@ -289,7 +305,15 @@ async function main() {
               '\nwindow.__captureTestFormulaCount = 0;' +
               '\nwindow.__captureTestReceiver = CaptureTest.installReceiver({panelId: 7, maxPayloadBytes: ' +
               receiverLimit +
-              '});',
+              '});' +
+              (pair
+                ? `
+              const firstHook=window.__SVG_MODIFIER_CAPTURE_V2__;
+              window.__secondReceiver=CaptureTest.installReceiver({panelId:8,maxPayloadBytes:${receiverLimit}});
+              const secondHook=window.__SVG_MODIFIER_CAPTURE_V2__;
+              window.__SVG_MODIFIER_CAPTURE_V2__={connect(identity){return (identity.panelId===7?firstHook:secondHook).connect(identity);}};
+              `
+                : ''),
           });
         } else if (hook !== 'absent') {
           await page.addInitScript((mode) => {
@@ -335,9 +359,11 @@ async function main() {
           }, hook);
         }
         const dashboardUrl = new URL(saved.url, base);
-        dashboardUrl.pathname = dashboardUrl.pathname.replace('/d/', '/d-solo/');
+        if (!pair) {
+          dashboardUrl.pathname = dashboardUrl.pathname.replace('/d/', '/d-solo/');
+        }
         dashboardUrl.search = new URLSearchParams({
-          panelId: String(panelId),
+          ...(!pair ? { panelId: String(panelId) } : {}),
           from: String(fromMs),
           to: String(toMs),
           timezone: 'utc',
@@ -550,6 +576,23 @@ async function main() {
         assert.equal(state.error.code, 'CAPTURE_PAYLOAD_TOO_LARGE');
         assert.equal(Object.hasOwn(state, 'snapshot'), false);
         assert.equal(Object.hasOwn(state, 'payloadBytes'), false);
+      }
+    );
+
+    await scenario(
+      'B15',
+      'two panel roots with identical SVG IDs remain isolated',
+      { pair: true },
+      async ({ page }) => {
+        const first = await snapshot(page);
+        await page.waitForFunction(() => window.__secondReceiver.read().status === 'terminal-ok');
+        const second = await page.evaluate(() => window.__secondReceiver.read().snapshot);
+        assert.deepEqual(validateSnapshotV2(second, { panelId: 8, maxPayloadBytes }), []);
+        assert.equal(first.indicators[0].id, second.indicators[0].id);
+        assert.deepEqual(first.indicators[0].state.color.rgba, [255, 0, 0, 1]);
+        assert.deepEqual(second.indicators[0].state.color.rgba, [255, 255, 0, 1]);
+        assert.ok(first.indicators[0].appearance.some((p) => JSON.stringify(p.fill?.rgba) === '[255,0,0,1]'));
+        assert.ok(second.indicators[0].appearance.some((p) => JSON.stringify(p.fill?.rgba) === '[255,255,0,1]'));
       }
     );
 

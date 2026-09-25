@@ -41,14 +41,40 @@ export function captureTooltip(
   // UI sorting/filtering retains each entry's identity, even when labels/values coincide.
   const idByEntry = new Map(content.queryData?.map((entry, index) => [entry, scalarIds[index]]));
   const shown = processTooltipContent(content, options)!;
+  const text = (value: unknown, field: string): string | null => {
+    if (value == null) {
+      return null;
+    }
+    if (typeof value === 'string') {
+      return value;
+    }
+    diagnostics.add(
+      {
+        code: 'CAPTURE_INVALID_VALUE',
+        severity: 'warning',
+        message: `Поле tooltip.${field} имеет нестроковое значение`,
+      },
+      { indicatorIds: [element.id] }
+    );
+    // React displays numeric children as text; objects/booleans are not visible strings.
+    return typeof value === 'number' && Number.isFinite(value) ? String(value) : null;
+  };
   result.metricIds = (shown.queryData ?? []).map((entry) => idByEntry.get(entry)!);
-  result.tables = (shown.queryTableData ?? []).map((t, index) => ({
-    metricId: tableIds[index],
-    rowIndices: t.columnsData.map((_, i) => i).reverse(),
-    ...(t.title === undefined ? {} : { title: t.title }),
-  }));
-  result.textAbove = Array.isArray(shown.textAbove) ? shown.textAbove.slice() : [];
-  result.textBelow = Array.isArray(shown.textBelow) ? shown.textBelow.slice() : [];
+  result.tables = (shown.queryTableData ?? []).map((t, index) => {
+    const title = text(t.title, 'title');
+    return {
+      metricId: tableIds[index],
+      rowIndices: t.columnsData.map((_, i) => i).reverse(),
+      ...(title === null ? {} : { title }),
+    };
+  });
+  const lines = (value: unknown, field: string) =>
+    (Array.isArray(value) ? value : [value]).flatMap((v) => {
+      const line = text(v, field);
+      return line === null ? [] : [line];
+    });
+  result.textAbove = lines(shown.textAbove, 'textAbove');
+  result.textBelow = lines(shown.textBelow, 'textBelow');
   result.diagnosticIds = [
     ...new Set((shown.diagnostics ?? []).map((d) => diagnostics.add(d, { indicatorIds: [element.id] }))),
   ];

@@ -9,8 +9,36 @@ export const addIds = (target: string[], values: readonly string[]) => {
   }
 };
 
-export function sourceLocation(source?: DiagnosticSource, extra: Partial<SourceLocationV2> = {}): SourceLocationV2 {
-  return Object.fromEntries(Object.entries({ ...source, ...extra }).filter(([, v]) => v !== undefined));
+export function sourceLocation(
+  source?: DiagnosticSource,
+  extra: Partial<SourceLocationV2> = {},
+  invalid = (_key: string) => {}
+): SourceLocationV2 {
+  const strings = new Set(['page', 'path', 'refId', 'legend', 'expressionRefId']);
+  const indices = new Set([
+    'pageIndex',
+    'line',
+    'column',
+    'metricsIndex',
+    'queryIndex',
+    'thresholdIndex',
+    'rowIndex',
+    'columnIndex',
+  ]);
+  return Object.fromEntries(
+    Object.entries({ ...source, ...extra }).filter(([key, value]) => {
+      if (value === undefined) {
+        return false;
+      }
+      const valid = strings.has(key)
+        ? typeof value === 'string'
+        : indices.has(key) && Number.isSafeInteger(value) && Number(value) >= 0;
+      if (!valid) {
+        invalid(key);
+      }
+      return valid;
+    })
+  );
 }
 
 export class DiagnosticIndexV2 {
@@ -24,7 +52,19 @@ export class DiagnosticIndexV2 {
     extra: Partial<SourceLocationV2> = {},
     ancestors = new Set<Diagnostic>()
   ): string {
-    const source = sourceLocation(item.source, extra);
+    const invalid: string[] = [];
+    const source = sourceLocation(item.source, extra, (key) => invalid.push(key));
+    for (const key of invalid) {
+      this.add(
+        {
+          code: 'CAPTURE_INVALID_VALUE',
+          severity: 'warning',
+          message: `Поле диагностики source.${key} опущено: неверный тип`,
+          source,
+        },
+        links
+      );
+    }
     const key = JSON.stringify([
       item.code,
       item.severity,
