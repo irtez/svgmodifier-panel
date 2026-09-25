@@ -1,5 +1,5 @@
-import type { CaptureRunV1, CaptureSessionV1 } from './protocol';
-import type { SvgModifierSnapshotV1 } from './models';
+import type { CaptureRunV2, CaptureSessionV2 } from './protocol';
+import type { SvgModifierSnapshotV2 } from './modelsV2';
 
 export type CaptureRuntime = typeof import('./runtime');
 export type RuntimeLoader = () => Promise<CaptureRuntime>;
@@ -8,13 +8,14 @@ export interface CaptureTicket {
   readonly connection: CaptureConnection;
   current(): boolean;
   load(): Promise<CaptureRuntime | null>;
-  publish(build: () => SvgModifierSnapshotV1): void;
+  publish(build: () => SvgModifierSnapshotV2): void;
   fail(code?: string): void;
 }
 export interface CaptureConnection {
   readonly panelId: number;
+  readonly maxPayloadBytes: number;
   readonly producerVersion: string;
-  begin(time: Omit<CaptureRunV1, 'generation'>): CaptureTicket;
+  begin(time: Omit<CaptureRunV2, 'generation'>): CaptureTicket;
   close(): void;
 }
 export const loadCaptureRuntime: RuntimeLoader = () => import(/* webpackChunkName: "svg-capture" */ './runtime');
@@ -32,8 +33,8 @@ export function connectCapture(
   producerVersion: string,
   load = loadCaptureRuntime
 ): CaptureConnection | null {
-  let raw: CaptureSessionV1 | null = null;
-  let handle: CaptureSessionV1;
+  let raw: CaptureSessionV2 | null = null;
+  let handle: CaptureSessionV2;
   let cleanupAttempted = false;
   const reject = () => {
     if (cleanupAttempted) {
@@ -54,7 +55,7 @@ export function connectCapture(
     if (!Number.isSafeInteger(panelId) || panelId < 0) {
       return null;
     }
-    const hook = window.__SVG_MODIFIER_CAPTURE_V1__;
+    const hook = window.__SVG_MODIFIER_CAPTURE_V2__;
     if (!hook || typeof hook.connect !== 'function') {
       return null;
     }
@@ -69,7 +70,7 @@ export function connectCapture(
     }
     const { protocolVersion, maxPayloadBytes, begin, publish, fail, close } = raw;
     if (
-      protocolVersion !== 1 ||
+      protocolVersion !== 2 ||
       !Number.isSafeInteger(maxPayloadBytes) ||
       maxPayloadBytes <= 0 ||
       ![begin, publish, fail, close].every((method) => typeof method === 'function')
@@ -95,6 +96,7 @@ export function connectCapture(
   const connection: CaptureConnection = {
     panelId,
     producerVersion,
+    maxPayloadBytes: handle.maxPayloadBytes,
     close() {
       if (closed) {
         return;

@@ -1,17 +1,17 @@
 import { connectCapture, CaptureRuntime } from './session';
-import type { CaptureIdentityV1, CaptureRunV1, CaptureSessionV1 } from './protocol';
-import type { SvgModifierSnapshotV1 } from './models';
+import type { CaptureIdentityV2, CaptureRunV2, CaptureSessionV2 } from './protocol';
+import type { SvgModifierSnapshotV2 } from './modelsV2';
 import { installReceiver } from './testing/receiver';
 
 const time = { effectiveFromMs: 10, effectiveToMs: 20 };
 const runtime = {} as CaptureRuntime;
-function receiver(patch: Partial<CaptureSessionV1> = {}) {
-  const identities: CaptureIdentityV1[] = [];
-  const begins: CaptureRunV1[] = [];
+function receiver(patch: Partial<CaptureSessionV2> = {}) {
+  const identities: CaptureIdentityV2[] = [];
+  const begins: CaptureRunV2[] = [];
   const errors: string[] = [];
   let closes = 0;
-  const handle: CaptureSessionV1 = {
-    protocolVersion: 1,
+  const handle: CaptureSessionV2 = {
+    protocolVersion: 2,
     maxPayloadBytes: 1024,
     begin: (run) => {
       begins.push(run);
@@ -27,7 +27,7 @@ function receiver(patch: Partial<CaptureSessionV1> = {}) {
     },
     ...patch,
   };
-  window.__SVG_MODIFIER_CAPTURE_V1__ = {
+  window.__SVG_MODIFIER_CAPTURE_V2__ = {
     connect: (identity) => {
       identities.push(identity);
       return handle;
@@ -43,7 +43,7 @@ function receiver(patch: Partial<CaptureSessionV1> = {}) {
   };
 }
 afterEach(() => {
-  delete window.__SVG_MODIFIER_CAPTURE_V1__;
+  delete window.__SVG_MODIFIER_CAPTURE_V2__;
 });
 
 it('[S01] без hook или с отказом receiver нет загрузки runtime', () => {
@@ -53,9 +53,22 @@ it('[S01] без hook или с отказом receiver нет загрузки 
     return runtime;
   };
   expect(connectCapture(7, '1.4.0', load)).toBeNull();
-  window.__SVG_MODIFIER_CAPTURE_V1__ = { connect: () => null };
+  window.__SVG_MODIFIER_CAPTURE_V2__ = { connect: () => null };
   expect(connectCapture(7, '1.4.0', load)).toBeNull();
   expect(imports).toBe(0);
+});
+
+it('[S20] ignores the retired hook without loading or notifying it', () => {
+  const connect = jest.fn(),
+    load = jest.fn();
+  Reflect.set(window, '__SVG_MODIFIER_CAPTURE_V1__', { connect });
+  try {
+    expect(connectCapture(7, '1.4.0', load)).toBeNull();
+    expect(connect).not.toHaveBeenCalled();
+    expect(load).not.toHaveBeenCalled();
+  } finally {
+    Reflect.deleteProperty(window, '__SVG_MODIFIER_CAPTURE_V1__');
+  }
 });
 
 it('[S02] begin инвалидирует старый ticket до загрузки и публикации', async () => {
@@ -71,7 +84,7 @@ it('[S02] begin инвалидирует старый ticket до загрузк
   let builds = 0;
   first.publish(() => {
     builds++;
-    return {} as SvgModifierSnapshotV1;
+    return {} as SvgModifierSnapshotV2;
   });
   expect(await first.load()).toBeNull();
   expect(await second.load()).toBe(runtime);
@@ -113,14 +126,14 @@ it.each(['getter', 'connect', 'protocol', 'limit', 'method'] as const)(
   (kind) => {
     let imports = 0;
     if (kind === 'getter') {
-      Object.defineProperty(window, '__SVG_MODIFIER_CAPTURE_V1__', {
+      Object.defineProperty(window, '__SVG_MODIFIER_CAPTURE_V2__', {
         configurable: true,
         get() {
           throw new Error('secret');
         },
       });
     } else if (kind === 'connect') {
-      window.__SVG_MODIFIER_CAPTURE_V1__ = {
+      window.__SVG_MODIFIER_CAPTURE_V2__ = {
         connect: () => {
           throw new Error('secret');
         },
@@ -128,7 +141,7 @@ it.each(['getter', 'connect', 'protocol', 'limit', 'method'] as const)(
     } else {
       receiver(
         kind === 'protocol'
-          ? { protocolVersion: 2 as 1 }
+          ? { protocolVersion: 1 as 2 }
           : kind === 'limit'
           ? { maxPayloadBytes: NaN }
           : { publish: null as any }
@@ -173,7 +186,7 @@ it('[S06] ошибка lazy import завершает capture безопасно
 });
 
 it('[S07] callback от receiver после возврата publish не может исполнить exporter', () => {
-  let saved!: () => SvgModifierSnapshotV1;
+  let saved!: () => SvgModifierSnapshotV2;
   receiver({
     publish: (_, build) => {
       saved = build;
@@ -183,7 +196,7 @@ it('[S07] callback от receiver после возврата publish не мож
   let builds = 0;
   ticket.publish(() => {
     builds++;
-    return {} as SvgModifierSnapshotV1;
+    return {} as SvgModifierSnapshotV2;
   });
   expect(() => saved()).toThrow();
   expect(builds).toBe(0);
@@ -191,21 +204,21 @@ it('[S07] callback от receiver после возврата publish не мож
 
 it('[S15] getter принятого handle бросает: закрываем его, чтобы remount не стал ambiguous', () => {
   const receiver = installReceiver({ panelId: 7 });
-  const hook = window.__SVG_MODIFIER_CAPTURE_V1__!;
+  const hook = window.__SVG_MODIFIER_CAPTURE_V2__!;
   const connect = hook.connect;
-  window.__SVG_MODIFIER_CAPTURE_V1__ = {
+  window.__SVG_MODIFIER_CAPTURE_V2__ = {
     connect: (identity) => {
       const handle = connect(identity)!;
       return {
         ...handle,
-        get protocolVersion(): 1 {
+        get protocolVersion(): 2 {
           throw new Error('broken getter');
         },
       };
     },
   };
   expect(connectCapture(7, '1.4.0')).toBeNull();
-  window.__SVG_MODIFIER_CAPTURE_V1__ = hook;
+  window.__SVG_MODIFIER_CAPTURE_V2__ = hook;
   const healthy = connectCapture(7, '1.4.0')!;
   healthy.begin(time);
   expect(receiver.read().status).toBe('pending');

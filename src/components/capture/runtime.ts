@@ -3,8 +3,7 @@ import type { PreparedPanelConfig } from '../infrastructure/config/configSetup';
 import type { CaptureTicket } from './session';
 import { EvaluationTrace } from './trace';
 import { guardTrace } from './guardTrace';
-import { buildSnapshot, SnapshotInput } from './snapshot';
-import { prepareDiagram, collectDiagram, attachDiagram } from './diagram';
+import { buildSnapshotV2, type SnapshotInputV2 } from './snapshotV2';
 
 export interface CapturePublication {
   commit(root: Element | null, view: string): void;
@@ -30,14 +29,13 @@ export function createTrace(
   return trace;
 }
 
-export type PublicationInput = Omit<SnapshotInput, 'diagram' | 'observed'> & {
-  observed: Omit<SnapshotInput['observed'], 'generation'>;
+export type PublicationInput = Omit<SnapshotInputV2, 'root' | 'observed'> & {
+  observed: Omit<SnapshotInputV2['observed'], 'generation'>;
 };
 
-export function createPublication(initial: CaptureTicket, input: PublicationInput, svg: string): CapturePublication {
+export function createPublication(initial: CaptureTicket, input: PublicationInput): CapturePublication {
   let ticket = initial;
   let previousView: string | undefined;
-  let source: ReturnType<typeof prepareDiagram> | undefined;
   return {
     commit(root, view) {
       if (!ticket.current() || view === previousView) {
@@ -52,29 +50,27 @@ export function createPublication(initial: CaptureTicket, input: PublicationInpu
       }
       previousView = view;
       const current = ticket;
-      source ??= prepareDiagram(svg);
-      void source
-        .then((prepared) => {
+      if (input.panel.mode !== 'svg') {
+        current.fail('CAPTURE_MODE_UNSUPPORTED');
+        return;
+      }
+      // Font loading can move labels after React has committed the SVG.
+      void Promise.resolve(root?.ownerDocument.fonts?.ready)
+        .then(() => {
           if (!current.current()) {
             return;
           }
           current.publish(() => {
-            const snapshot = buildSnapshot({
+            const snapshot = buildSnapshotV2({
               ...input,
+              root,
               observed: { ...input.observed, generation: current.generation },
-              diagram: {
-                status: 'missing',
-                coordinateSpace: null,
-                viewport: null,
-                items: [],
-                connections: [],
-                diagnosticIds: [],
-              },
             });
-            return attachDiagram(
-              snapshot,
-              collectDiagram({ source: prepared, root, mode: input.panel.mode, rules: snapshot.configuration.rules })
-            );
+            if (new Blob([JSON.stringify(snapshot)]).size > current.connection.maxPayloadBytes) {
+              current.fail('CAPTURE_PAYLOAD_TOO_LARGE');
+              throw new Error('CAPTURE_PAYLOAD_TOO_LARGE');
+            }
+            return snapshot;
           });
         })
         .catch(() => current.fail());

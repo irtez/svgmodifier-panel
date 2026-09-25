@@ -1,35 +1,35 @@
-import type { SvgModifierSnapshotV1 } from './models';
+import type { SvgModifierSnapshotV2 } from './modelsV2';
 
-export interface CaptureIdentityV1 {
+export interface CaptureIdentityV2 {
   producerId: 'svgmodifier-panel';
   producerVersion: string;
   panelId: number;
   instanceId: string;
 }
 
-export interface CaptureRunV1 {
+export interface CaptureRunV2 {
   generation: number;
   effectiveFromMs: number;
   effectiveToMs: number;
 }
 
-export interface CaptureSessionV1 {
-  protocolVersion: 1;
+export interface CaptureSessionV2 {
+  protocolVersion: 2;
   maxPayloadBytes: number;
-  begin(run: CaptureRunV1): void;
+  begin(run: CaptureRunV2): void;
   // The receiver calls build only for the active instance and current generation.
-  publish(generation: number, build: () => SvgModifierSnapshotV1): void;
+  publish(generation: number, build: () => SvgModifierSnapshotV2): void;
   fail(generation: number, error: { code: string; message: string }): void;
   close(): void;
 }
 
-export interface CaptureHookV1 {
-  connect(identity: CaptureIdentityV1): CaptureSessionV1 | null;
+export interface CaptureHookV2 {
+  connect(identity: CaptureIdentityV2): CaptureSessionV2 | null;
 }
 
 declare global {
   interface Window {
     // A receiver installs this before navigation. The plugin never creates it.
-    __SVG_MODIFIER_CAPTURE_V1__?: CaptureHookV1;
+    __SVG_MODIFIER_CAPTURE_V2__?: CaptureHookV2;
   }
 }

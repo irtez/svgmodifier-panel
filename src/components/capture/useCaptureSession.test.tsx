@@ -2,25 +2,25 @@ import React, { useRef } from 'react';
 import { render, waitFor } from '@testing-library/react';
 import { LoadingState, PanelData, TimeRange } from '@grafana/data';
 import type { PanelOptions } from 'types';
-import type { CaptureRunV1 } from './protocol';
-import type { SvgModifierSnapshotV1 } from './models';
+import type { CaptureRunV2 } from './protocol';
+import type { SvgModifierSnapshotV2 } from './modelsV2';
 import { useCaptureSession, useCaptureCommit } from './useCaptureSession';
 import { usePanelData } from '../application/hooks/usePanelData';
 import { useSvgMount, useSvgUpdates } from '../presentation/components/svg/hooks/useSvgPanel';
-import { validateSnapshot } from './testing/validateSnapshot';
+import { validateSnapshotV2 } from './testing/validateSnapshotV2';
 import { data, options, range } from './testing/panelFixture';
 import { installReceiver } from './testing/receiver';
 import { EvaluationTrace } from './trace';
 
 function receiver() {
-  let latest: SvgModifierSnapshotV1 | undefined;
+  let latest: SvgModifierSnapshotV2 | undefined;
   let active = 0;
-  const values: SvgModifierSnapshotV1[] = [];
+  const values: SvgModifierSnapshotV2[] = [];
   const errors: string[] = [];
-  const starts: CaptureRunV1[] = [];
-  window.__SVG_MODIFIER_CAPTURE_V1__ = {
+  const starts: CaptureRunV2[] = [];
+  window.__SVG_MODIFIER_CAPTURE_V2__ = {
     connect: () => ({
-      protocolVersion: 1,
+      protocolVersion: 2,
       maxPayloadBytes: 1024 * 1024,
       begin(run) {
         active = run.generation;
@@ -79,7 +79,7 @@ function Harness({
 }
 afterEach(() => {
   jest.restoreAllMocks();
-  delete window.__SVG_MODIFIER_CAPTURE_V1__;
+  delete window.__SVG_MODIFIER_CAPTURE_V2__;
 });
 
 it('[S08] принятая session получает полный снимок того же расчёта после SVG operations', async () => {
@@ -89,10 +89,10 @@ it('[S08] принятая session получает полный снимок т
   await waitFor(() => expect(ui.container.querySelector('output')?.textContent).toBe('95'));
   await waitFor(() => expect(state.latest).toBeDefined());
   expect(state.latest?.metrics[0].scalar?.value).toBe(95);
-  expect(state.latest?.elements[0].title).toBeNull();
+  expect(state.latest?.schemaVersion).toBe(2);
   expect(state.latest?.panel).toEqual({ id: 7, title: null, mode: 'svg' });
   expect(state.latest?.metrics[0].sources[0].fieldName).toBe('raw_alpha_metric');
-  expect(validateSnapshot(state.latest, { panelId: 7, maxPayloadBytes: 1024 * 1024 })).toEqual([]);
+  expect(validateSnapshotV2(state.latest, { panelId: 7, maxPayloadBytes: 1024 * 1024 })).toEqual([]);
   // jsdom не реализует SVGTextElement/layout; live label проверяется настоящим Chromium.
   expect(ui.container.querySelector('rect')?.getAttribute('fill')).toBe('red');
 });
@@ -131,16 +131,18 @@ it.each(['grid', 'yaml', 'svg', 'error'] as const)('[S10] %s имеет terminal
     input.errors = [{ refId: 'A', message: 'Synthetic failure' }];
   }
   render(<Harness input={input} opts={opts} timeRange={range()} />);
+  if (kind === 'grid') {
+    await waitFor(() => expect(state.errors).toEqual(['CAPTURE_MODE_UNSUPPORTED']));
+    expect(state.latest).toBeUndefined();
+    return;
+  }
   await waitFor(() => expect(state.latest).toBeDefined());
-  expect(validateSnapshot(state.latest, { panelId: 7, maxPayloadBytes: 1024 * 1024 })).toEqual([]);
+  expect(validateSnapshotV2(state.latest, { panelId: 7, maxPayloadBytes: 1024 * 1024 })).toEqual([]);
   if (kind === 'yaml' || kind === 'svg') {
     expect(state.latest?.evaluationStatus).toBe('invalid_configuration');
   }
   if (kind === 'error') {
     expect(state.latest?.observed.dataState).toBe('Error');
-  }
-  if (kind === 'grid') {
-    expect(state.latest?.diagram.status).toBe('not_rendered');
   }
 });
 
@@ -162,7 +164,7 @@ it('[S12] замена YAML после mount использует текущие
   const opts = options();
   opts.jsonData.metricsMapping[0].code = opts.jsonData.metricsMapping[0].code.replace('color: red', 'color: orange');
   ui.rerender(<Harness {...props} opts={opts} />);
-  await waitFor(() => expect(state.latest?.metrics[0].scalar?.color).toBe('orange'));
+  await waitFor(() => expect(state.latest?.metrics[0].scalar?.color?.css).toBe('orange'));
   expect(ui.container.querySelector('rect')?.getAttribute('fill')).toBe('orange');
 });
 
@@ -183,7 +185,7 @@ it('[S13] StrictMode/remount корректно монтирует SVG и зак
 it('[S14] resize публикует новое поколение через строгий receiver без повторной формулы', async () => {
   const receiver = installReceiver({
     panelId: 7,
-    validate: (value) => validateSnapshot(value, { panelId: 7, maxPayloadBytes: 1024 * 1024 }),
+    validate: (value) => validateSnapshotV2(value, { panelId: 7, maxPayloadBytes: 1024 * 1024 }),
   });
   const opts = options();
   Reflect.set(globalThis, '__captureExecutionCount', 0);
@@ -251,7 +253,7 @@ it('[S19] смена исходного SVG в grid инвалидирует с�
   const props = { input: data(), opts, timeRange: range() };
   try {
     const ui = render(<Harness {...props} />);
-    await waitFor(() => expect(receiver.read().status).toBe('terminal-ok'));
+    await waitFor(() => expect(receiver.read().status).toBe('terminal-error'));
     const first = receiver.read().generation!;
     ui.rerender(
       <Harness
@@ -266,8 +268,9 @@ it('[S19] смена исходного SVG в grid инвалидирует с�
       />
     );
     await waitFor(() => expect(receiver.read().generation).toBeGreaterThan(first));
-    await waitFor(() => expect(receiver.read().status).toBe('terminal-ok'));
-    expect(receiver.read().snapshot?.diagram.items.some((item) => item.authoredText === 'Service Beta')).toBe(true);
+    await waitFor(() => expect(receiver.read().status).toBe('terminal-error'));
+    expect(receiver.read().error?.code).toBe('CAPTURE_MODE_UNSUPPORTED');
+    expect(receiver.read().snapshot).toBeUndefined();
   } finally {
     receiver.dispose();
   }

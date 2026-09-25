@@ -1,15 +1,15 @@
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
 import { installReceiver, type TestCaptureReceiver } from './receiver';
-import type { SvgModifierSnapshotV1 } from '../models';
-import type { CaptureIdentityV1, CaptureSessionV1 } from '../protocol';
-import { validateSnapshot } from './validateSnapshot';
+import type { SvgModifierSnapshotV2 } from '../modelsV2';
+import type { CaptureIdentityV2, CaptureSessionV2 } from '../protocol';
+import { validateSnapshotV2 } from './validateSnapshotV2';
 
-function fixture(): SvgModifierSnapshotV1 {
-  return JSON.parse(readFileSync(resolve(__dirname, '../../../../docs/examples/capture-v1.json'), 'utf8'));
+function fixture(): SvgModifierSnapshotV2 {
+  return JSON.parse(readFileSync(resolve(__dirname, '../../../../docs/examples/capture-v2.json'), 'utf8'));
 }
 
-const identity: CaptureIdentityV1 = {
+const identity: CaptureIdentityV2 = {
   producerId: 'svgmodifier-panel',
   producerVersion: '1.4.0',
   panelId: 7,
@@ -17,15 +17,15 @@ const identity: CaptureIdentityV1 = {
 };
 const run = { generation: 1, effectiveFromMs: 1000, effectiveToMs: 2000 };
 
-function snapshot(generation = 1): SvgModifierSnapshotV1 {
+function snapshot(generation = 1): SvgModifierSnapshotV2 {
   const value = fixture();
   value.producer.version = identity.producerVersion;
   Object.assign(value.observed, run, { generation });
   return value;
 }
 
-function connect(instanceId = 'mount-a'): CaptureSessionV1 {
-  const session = window.__SVG_MODIFIER_CAPTURE_V1__!.connect({ ...identity, instanceId });
+function connect(instanceId = 'mount-a'): CaptureSessionV2 {
+  const session = window.__SVG_MODIFIER_CAPTURE_V2__!.connect({ ...identity, instanceId });
   expect(session).not.toBeNull();
   return session!;
 }
@@ -37,17 +37,17 @@ describe('bounded test browser receiver', () => {
   });
   afterEach(() => {
     receiver.dispose();
-    delete window.__SVG_MODIFIER_CAPTURE_V1__;
+    delete window.__SVG_MODIFIER_CAPTURE_V2__;
   });
 
   it('[R22] сохраняет обычное JSON-поле toJSON без исполнения или изменения значения', () => {
     const session = connect();
     const value = snapshot();
-    value.metrics[0].settings.extra = { toJSON: 'authored value' };
+    rawData(value).extra = { toJSON: 'authored value' };
     session.begin(run);
     session.publish(1, () => value);
     expect(receiver.read().status).toBe('terminal-ok');
-    expect(receiver.read().snapshot?.metrics[0].settings.extra).toEqual({ toJSON: 'authored value' });
+    expect(rawData(receiver.read().snapshot).extra).toEqual({ toJSON: 'authored value' });
   });
 
   it('[R01] publishes one detached immutable snapshot with matching identity and observed run', () => {
@@ -59,18 +59,18 @@ describe('bounded test browser receiver', () => {
     const state = receiver.read();
     expect(state).toMatchObject({ status: 'terminal-ok', identity, generation: 1, snapshot: value });
     expect(state.payloadBytes).toBe(Buffer.byteLength(JSON.stringify(value), 'utf8'));
-    expect(validateSnapshot(state.snapshot, { panelId: 7, maxPayloadBytes: 1024 * 1024 })).toEqual([]);
+    expect(validateSnapshotV2(state.snapshot, { panelId: 7, maxPayloadBytes: 1024 * 1024 })).toEqual([]);
     value.panel.title = 'Changed after publication';
     value.metrics[0].scalar!.value = 999;
     expect(state.snapshot!.panel.title).not.toBe(value.panel.title);
-    expect(state.snapshot!.metrics[0].scalar!.value).toBe(12.3456789012);
+    expect(state.snapshot!.metrics[0].scalar!.value).toBe(12.34567);
     expect(Object.isFrozen(state)).toBe(true);
     expect(Object.isFrozen(state.snapshot!.metrics[0].scalar)).toBe(true);
     expect(Object.isFrozen(state.identity)).toBe(true);
   });
 
   it('[R02] rejects wrong panels and malformed producer identity without disturbing the target', () => {
-    const hook = window.__SVG_MODIFIER_CAPTURE_V1__!;
+    const hook = window.__SVG_MODIFIER_CAPTURE_V2__!;
     for (const changed of [
       { panelId: 8 },
       { panelId: NaN },
@@ -80,7 +80,7 @@ describe('bounded test browser receiver', () => {
       { instanceId: '' },
       { instanceId: 'x'.repeat(10000) },
     ]) {
-      expect(hook.connect({ ...identity, ...changed } as CaptureIdentityV1)).toBeNull();
+      expect(hook.connect({ ...identity, ...changed } as CaptureIdentityV2)).toBeNull();
     }
     let reads = 0;
     expect(
@@ -121,7 +121,7 @@ describe('bounded test browser receiver', () => {
     session.begin({ ...run, generation: 3 });
     session.publish(3, build);
     expect(builds).toBe(1);
-    expect(window.__SVG_MODIFIER_CAPTURE_V1__).toBeUndefined();
+    expect(window.__SVG_MODIFIER_CAPTURE_V2__).toBeUndefined();
   });
 
   it.each(['mount-a', 'mount-b'])(
@@ -202,7 +202,7 @@ describe('bounded test browser receiver', () => {
     [
       'schema',
       (v: any) => {
-        v.schemaVersion = 2;
+        v.schemaVersion = 1;
       },
     ],
     [
@@ -267,11 +267,11 @@ describe('bounded test browser receiver', () => {
     receiver.dispose();
     receiver = installReceiver({
       panelId: 7,
-      validate: (value) => validateSnapshot(value, { panelId: 7, maxPayloadBytes: 1024 * 1024 }),
+      validate: (value) => validateSnapshotV2(value, { panelId: 7, maxPayloadBytes: 1024 * 1024 }),
     });
     const session = connect();
     const value = snapshot();
-    value.elements[0].winnerMetricId = 'missing-metric';
+    value.indicators[0].state.winnerMetricId = 'missing-metric';
     session.begin(run);
     session.publish(1, () => value);
     expect(receiver.read()).toMatchObject({ status: 'terminal-error', error: { code: 'CAPTURE_PAYLOAD_INVALID' } });
@@ -306,7 +306,7 @@ describe('bounded test browser receiver', () => {
   ])('[R09] rejects %s without silently coercing or omitting values', (_name, buildValue) => {
     const session = connect();
     const value = snapshot();
-    value.metrics[0].settings.extra = buildValue() as never;
+    rawData(value).extra = buildValue() as never;
     session.begin(run);
     session.publish(1, () => value);
     expect(receiver.read()).toMatchObject({ status: 'terminal-error', error: { code: 'CAPTURE_PAYLOAD_INVALID' } });
@@ -316,7 +316,7 @@ describe('bounded test browser receiver', () => {
     let executions = 0;
     const session = connect();
     const value = snapshot();
-    value.metrics[0].settings.extra = Object.defineProperty({}, 'secret', {
+    rawData(value).extra = Object.defineProperty({}, 'secret', {
       enumerable: true,
       get: () => {
         executions++;
@@ -328,7 +328,7 @@ describe('bounded test browser receiver', () => {
     expect(receiver.read().error?.code).toBe('CAPTURE_PAYLOAD_INVALID');
     session.begin({ ...run, generation: 2 });
     value.observed.generation = 2;
-    value.metrics[0].settings.extra = {
+    rawData(value).extra = {
       toJSON: () => {
         executions++;
         return 'hidden';
@@ -351,7 +351,7 @@ describe('bounded test browser receiver', () => {
         keys: 'key\n\ud800😀',
       };
       value.panel.title = texts[kind];
-      value.metrics[0].settings[texts[kind]] = texts[kind];
+      rawData(value)[texts[kind]] = texts[kind];
       const byteLength = Buffer.byteLength(JSON.stringify(value), 'utf8');
       receiver.dispose();
       receiver = installReceiver({ panelId: 7, maxPayloadBytes: byteLength });
@@ -412,12 +412,12 @@ describe('bounded test browser receiver', () => {
     for (let i = 0; i < 200; i++) {
       child = [child];
     }
-    deep.metrics[0].settings.extra = child as never;
+    rawData(deep).extra = child as never;
     session.begin(run);
     session.publish(1, () => deep);
     expect(receiver.read().error?.code).toBe('CAPTURE_PAYLOAD_TOO_LARGE');
     const wide = snapshot(2);
-    wide.metrics[0].settings.extra = Array(100001).fill(0);
+    rawData(wide).extra = Array(4 * 1024 * 1024).fill(0);
     session.begin({ ...run, generation: 2 });
     session.publish(2, () => wide);
     expect(receiver.read().error?.code).toBe('CAPTURE_PAYLOAD_TOO_LARGE');
@@ -427,18 +427,18 @@ describe('bounded test browser receiver', () => {
     const session = connect();
     const value = snapshot();
     const shared = Object.assign(Object.create(null), { count: 0 });
-    value.metrics[0].settings.extra = JSON.parse('{"__proto__":{"safe":true}}');
-    value.metrics[0].settings.first = shared;
-    value.metrics[0].settings.second = shared;
+    rawData(value).extra = JSON.parse('{"__proto__":{"safe":true}}');
+    rawData(value).first = shared;
+    rawData(value).second = shared;
     session.begin(run);
     session.publish(1, () => value);
     expect(receiver.read().status).toBe('terminal-ok');
-    const settings: unknown = receiver.read().snapshot!.metrics[0].settings;
+    const settings: unknown = rawData(receiver.read().snapshot);
     expect(settings).toMatchObject({ first: { count: 0 }, second: { count: 0 } });
-    expect(Object.hasOwn(receiver.read().snapshot!.metrics[0].settings.extra as object, '__proto__')).toBe(true);
+    expect(Object.hasOwn(rawData(receiver.read().snapshot).extra as object, '__proto__')).toBe(true);
     expect(Object.prototype).not.toHaveProperty('safe');
     shared.count = 4;
-    expect(receiver.read().snapshot!.metrics[0].settings.first).toEqual({ count: 0 });
+    expect(rawData(receiver.read().snapshot).first).toEqual({ count: 0 });
   });
 
   it('[R15] keeps separate installations isolated and disposal removes only its own hook', () => {
@@ -446,12 +446,12 @@ describe('bounded test browser receiver', () => {
     const firstSession = connect();
     firstSession.begin(run);
     receiver = installReceiver({ panelId: 7 });
-    const secondHook = window.__SVG_MODIFIER_CAPTURE_V1__;
+    const secondHook = window.__SVG_MODIFIER_CAPTURE_V2__;
     const secondSession = connect();
     secondSession.begin(run);
     secondSession.publish(1, () => snapshot());
     first.dispose();
-    expect(window.__SVG_MODIFIER_CAPTURE_V1__).toBe(secondHook);
+    expect(window.__SVG_MODIFIER_CAPTURE_V2__).toBe(secondHook);
     expect(first.read()).toMatchObject({ status: 'idle', identity: null });
     expect(receiver.read().status).toBe('terminal-ok');
   });
@@ -471,8 +471,8 @@ describe('bounded test browser receiver', () => {
 
   it('[R17] does not let reentrant validation overwrite a newer pending run', () => {
     receiver.dispose();
-    let session: CaptureSessionV1;
-    let original: SvgModifierSnapshotV1;
+    let session: CaptureSessionV2;
+    let original: SvgModifierSnapshotV2;
     receiver = installReceiver({
       panelId: 7,
       validate: (value) => {
@@ -539,7 +539,7 @@ describe('bounded test browser receiver', () => {
   });
 
   it.each([
-    { label: 'traversal', length: 100001, maxPayloadBytes: 1024 * 1024 },
+    { label: 'traversal', length: 1024 * 1024 + 1, maxPayloadBytes: 1024 * 1024 },
     { label: 'minimum JSON bytes', length: 15000, maxPayloadBytes: 20000 },
   ])('[R21] rejects oversized array by $label before enumerating keys', ({ length, maxPayloadBytes }) => {
     receiver.dispose();
@@ -547,7 +547,7 @@ describe('bounded test browser receiver', () => {
     const session = connect();
     const value = snapshot();
     let enumerations = 0;
-    value.metrics[0].settings.extra = new Proxy(new Array(length), {
+    rawData(value).extra = new Proxy(new Array(length), {
       ownKeys() {
         enumerations++;
         throw new Error('array keys must not be enumerated');
@@ -560,3 +560,9 @@ describe('bounded test browser receiver', () => {
     expect(enumerations).toBe(0);
   });
 });
+
+// Transport-only malformed payloads; not part of the production schema.
+function rawData(value: unknown): Record<string, any> {
+  const record = value as { testData?: Record<string, any> };
+  return (record.testData ??= {});
+}

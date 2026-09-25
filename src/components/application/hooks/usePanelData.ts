@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useLayoutEffect, type RefObject } from 'react';
 import { LoadingState, PanelData, TimeRange } from '@grafana/data';
+import { config } from '@grafana/runtime';
 import { PanelOptions } from 'types';
 
 import { initSVG } from 'components/infrastructure/svg/updater';
@@ -104,6 +105,7 @@ export const usePanelData = (
   }, [mode, svgDoc, svgRoot, mappingArray]);
 
   const transformationsExpressions = options.transformations.expressions;
+  const tooltipOptions = options.tooltip;
   const inputKey = useMemo(
     () => ({
       token: {},
@@ -119,6 +121,7 @@ export const usePanelData = (
       calculateOptions,
       notifyShow,
       transformationsExpressions,
+      tooltipOptions,
       capture,
     }),
     [
@@ -134,6 +137,7 @@ export const usePanelData = (
       calculateOptions,
       notifyShow,
       transformationsExpressions,
+      tooltipOptions,
       capture,
     ]
   );
@@ -184,36 +188,39 @@ export const usePanelData = (
           }
         }
       }
-      const publication = (evaluation: PanelEvaluation): CapturePublication | undefined => {
+      const publication = (
+        evaluation: PanelEvaluation,
+        presentation: ReturnType<typeof buildPanelPresentation>
+      ): CapturePublication | undefined => {
         if (!runtime || !trace || !ticket?.current()) {
           return undefined;
         }
         try {
-          return runtime.createPublication(
-            ticket,
-            {
-              trace,
-              evaluation,
-              producerVersion: ticket.connection.producerVersion,
-              panel: { id: ticket.connection.panelId, title: null, mode },
-              observed: {
-                dataState: data.state as 'Done' | 'Error',
-                effectiveFromMs: timeRange.from.valueOf(),
-                effectiveToMs: timeRange.to.valueOf(),
-                evaluatedAtMs: Date.now(),
-              },
-              evaluationStatus: failed
-                ? 'failed'
-                : parsedConfig.status === 'invalid' || (mode === 'svg' && !svgDoc)
-                ? 'invalid_configuration'
-                : 'evaluated',
-              configuration: {
-                yamlStatus: parsedConfig.status,
-                svgStatus: mode !== 'svg' ? 'not_evaluated' : !svgCode ? 'empty' : svgDoc ? 'ready' : 'invalid',
-              },
+          return runtime.createPublication(ticket, {
+            trace,
+            evaluation,
+            presentation,
+            prepared: preparedConfig,
+              tooltipOptions,
+            linkContext: { documentUrl: window.location.href, baseUrl: document.baseURI, appUrl: config.appUrl },
+            producerVersion: ticket.connection.producerVersion,
+            panel: { id: ticket.connection.panelId, title: null, mode },
+            observed: {
+              dataState: data.state as 'Done' | 'Error',
+              effectiveFromMs: timeRange.from.valueOf(),
+              effectiveToMs: timeRange.to.valueOf(),
+              evaluatedAtMs: Date.now(),
             },
-            svgCode ?? ''
-          );
+            evaluationStatus: failed
+              ? 'failed'
+              : parsedConfig.status === 'invalid' || (mode === 'svg' && !svgDoc)
+              ? 'invalid_configuration'
+              : 'evaluated',
+            configurationStatus: {
+              yaml: parsedConfig.status,
+              svg: mode !== 'svg' ? 'not_evaluated' : !svgCode ? 'empty' : svgDoc ? 'ready' : 'invalid',
+            },
+          });
         } catch {
           ticket.fail();
           return undefined;
@@ -292,7 +299,7 @@ export const usePanelData = (
         if (isCurrent()) {
           setProcessedData({
             inputKey: inputKey.token,
-            capture: publication(evaluation),
+            capture: publication(evaluation, result),
             generation,
             timeRange,
             evaluation,
@@ -315,7 +322,7 @@ export const usePanelData = (
         const reset = buildPanelPresentation(evaluation, preparedConfig.elementsById, calculateOptions);
         setProcessedData({
           inputKey: inputKey.token,
-          capture: publication(evaluation),
+          capture: publication(evaluation, reset),
           generation,
           timeRange,
           evaluation,
@@ -342,6 +349,7 @@ export const usePanelData = (
     calculateOptions,
     notifyShow,
     transformationsExpressions,
+    tooltipOptions,
     inputKey,
     mappingArray,
     mode,

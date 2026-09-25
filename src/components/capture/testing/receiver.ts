@@ -1,6 +1,6 @@
 // Только browser-harness: модуль не входит в runtime плагина или Go renderer.
-import type { JsonValue, SvgModifierSnapshotV1 } from '../models';
-import type { CaptureHookV1, CaptureIdentityV1, CaptureRunV1, CaptureSessionV1 } from '../protocol';
+import type { JsonValueV2, SvgModifierSnapshotV2 } from '../modelsV2';
+import type { CaptureHookV2, CaptureIdentityV2, CaptureRunV2, CaptureSessionV2 } from '../protocol';
 
 export interface ReceiverOptions {
   panelId: number;
@@ -20,6 +20,7 @@ const ERROR_MESSAGES = {
   CAPTURE_PAYLOAD_INVALID: 'Capture payload does not match the expected contract.',
   CAPTURE_DATA_STATE_UNSUPPORTED: 'The panel data state is not supported for capture.',
   CAPTURE_EXPORT_FAILED: 'The panel could not produce a capture payload.',
+  CAPTURE_MODE_UNSUPPORTED: 'The panel display mode is not supported for map capture.',
   CAPTURE_PROTOCOL_UNSUPPORTED: 'The capture protocol is not supported.',
   CAPTURE_FRAME_UNSUPPORTED: 'The producer frame is not supported for capture.',
   CAPTURE_PRODUCER_MISSING: 'No compatible capture producer is available.',
@@ -27,9 +28,9 @@ const ERROR_MESSAGES = {
 type ErrorCode = keyof typeof ERROR_MESSAGES;
 
 interface StateFields {
-  readonly identity: Readonly<CaptureIdentityV1> | null;
+  readonly identity: Readonly<CaptureIdentityV2> | null;
   readonly generation: number | null;
-  readonly snapshot?: DeepReadonly<SvgModifierSnapshotV1>;
+  readonly snapshot?: DeepReadonly<SvgModifierSnapshotV2>;
   readonly payloadBytes?: number;
   readonly error?: Readonly<{ code: ErrorCode; message: string }>;
 }
@@ -37,13 +38,13 @@ interface StateFields {
 export type ReceiverState = StateFields &
   (
     | { readonly status: 'idle'; readonly generation: null }
-    | { readonly status: 'pending'; readonly identity: Readonly<CaptureIdentityV1>; readonly generation: number }
+    | { readonly status: 'pending'; readonly identity: Readonly<CaptureIdentityV2>; readonly generation: number }
     | { readonly status: 'terminal-error'; readonly error: Readonly<{ code: ErrorCode; message: string }> }
     | {
         readonly status: 'terminal-ok';
-        readonly identity: Readonly<CaptureIdentityV1>;
+        readonly identity: Readonly<CaptureIdentityV2>;
         readonly generation: number;
-        readonly snapshot: DeepReadonly<SvgModifierSnapshotV1>;
+        readonly snapshot: DeepReadonly<SvgModifierSnapshotV2>;
         readonly payloadBytes: number;
       }
   );
@@ -55,8 +56,7 @@ export interface TestCaptureReceiver {
 
 // Отдельные пределы работы защищают от глубокого или очень широкого компактного JSON.
 const MAX_DEPTH = 64;
-const MAX_VALUES = 100000;
-const DEFAULT_PAYLOAD_BYTES = 1024 * 1024;
+const DEFAULT_PAYLOAD_BYTES = 4 * 1024 * 1024;
 
 class CopyFailure {
   constructor(readonly code: 'CAPTURE_PAYLOAD_INVALID' | 'CAPTURE_PAYLOAD_TOO_LARGE') {}
@@ -70,7 +70,7 @@ function tooLarge(): never {
 }
 
 /** Копия строится с бюджетом; не создаём полную JSON-строку или UTF-8 буфер. */
-function boundedCopy(input: unknown, maxBytes: number): { value: JsonValue; bytes: number } {
+function boundedCopy(input: unknown, maxBytes: number): { value: JsonValueV2; bytes: number } {
   let bytes = 0;
   let values = 0;
   const ancestors = new Set<object>();
@@ -109,8 +109,8 @@ function boundedCopy(input: unknown, maxBytes: number): { value: JsonValue; byte
       }
     }
   };
-  const visit = (value: unknown, depth: number): JsonValue => {
-    if (++values > MAX_VALUES || depth > MAX_DEPTH) {
+  const visit = (value: unknown, depth: number): JsonValueV2 => {
+    if (++values > maxBytes || depth > MAX_DEPTH) {
       tooLarge();
     }
     if (value === null) {
@@ -149,19 +149,19 @@ function boundedCopy(input: unknown, maxBytes: number): { value: JsonValue; byte
       }
       arrayLength = length;
       const minimumBytes = length === 0 ? 2 : length * 2 + 1;
-      if (length > MAX_VALUES - values || minimumBytes > maxBytes - bytes) {
+      if (length > maxBytes - values || minimumBytes > maxBytes - bytes) {
         tooLarge();
       }
     }
     const keys = Reflect.ownKeys(value);
     const count = keys.length - (array ? 1 : 0);
-    if (count > MAX_VALUES - values || count > maxBytes - bytes) {
+    if (count > maxBytes - values || count > maxBytes - bytes) {
       tooLarge();
     }
     if (array && arrayLength !== count) {
       invalid();
     }
-    const copy: JsonValue[] | Record<string, JsonValue> = array ? [] : {};
+    const copy: JsonValueV2[] | Record<string, JsonValueV2> = array ? [] : {};
     ancestors.add(value);
     spend(2);
     let entries = 0;
@@ -193,7 +193,7 @@ function boundedCopy(input: unknown, maxBytes: number): { value: JsonValue; byte
       entries++;
     }
     ancestors.delete(value);
-    return Object.freeze(copy) as JsonValue;
+    return Object.freeze(copy) as JsonValueV2;
   };
   return { value: visit(input, 0), bytes };
 }
@@ -206,7 +206,7 @@ function safeInteger(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value);
 }
 
-function identityFrom(input: unknown, panelId: number): Readonly<CaptureIdentityV1> | null {
+function identityFrom(input: unknown, panelId: number): Readonly<CaptureIdentityV2> | null {
   try {
     const value = boundedCopy(input, 2048).value;
     if (
@@ -223,13 +223,13 @@ function identityFrom(input: unknown, panelId: number): Readonly<CaptureIdentity
     ) {
       return null;
     }
-    return value as unknown as Readonly<CaptureIdentityV1>;
+    return value as unknown as Readonly<CaptureIdentityV2>;
   } catch {
     return null;
   }
 }
 
-function runFrom(input: unknown): Readonly<CaptureRunV1> | null {
+function runFrom(input: unknown): Readonly<CaptureRunV2> | null {
   try {
     const value = boundedCopy(input, 256).value;
     if (
@@ -243,17 +243,17 @@ function runFrom(input: unknown): Readonly<CaptureRunV1> | null {
     ) {
       return null;
     }
-    return value as unknown as Readonly<CaptureRunV1>;
+    return value as unknown as Readonly<CaptureRunV2>;
   } catch {
     return null;
   }
 }
 
-function matchesRun(value: JsonValue, identity: Readonly<CaptureIdentityV1>, run: Readonly<CaptureRunV1>): boolean {
+function matchesRun(value: JsonValueV2, identity: Readonly<CaptureIdentityV2>, run: Readonly<CaptureRunV2>): boolean {
   if (
     !record(value) ||
     value.kind !== 'svgmodifier' ||
-    value.schemaVersion !== 1 ||
+    value.schemaVersion !== 2 ||
     !record(value.producer) ||
     value.producer.id !== identity.producerId ||
     value.producer.version !== identity.producerVersion ||
@@ -274,9 +274,9 @@ function matchesRun(value: JsonValue, identity: Readonly<CaptureIdentityV1>, run
 }
 
 interface LiveSession {
-  identity: Readonly<CaptureIdentityV1>;
+  identity: Readonly<CaptureIdentityV2>;
   highestGeneration: number;
-  run: Readonly<CaptureRunV1> | null;
+  run: Readonly<CaptureRunV2> | null;
 }
 
 export function installReceiver(options: ReceiverOptions): TestCaptureReceiver {
@@ -288,7 +288,7 @@ export function installReceiver(options: ReceiverOptions): TestCaptureReceiver {
   const ownerWindow = window;
   const live = new Set<LiveSession>();
   let disposed = false;
-  const idle = (identity: Readonly<CaptureIdentityV1> | null = null): ReceiverState =>
+  const idle = (identity: Readonly<CaptureIdentityV2> | null = null): ReceiverState =>
     Object.freeze({ status: 'idle', identity, generation: null });
   let state = idle();
   const error = (code: ErrorCode, session?: LiveSession) => {
@@ -312,8 +312,8 @@ export function installReceiver(options: ReceiverOptions): TestCaptureReceiver {
       state = idle(live.values().next().value?.identity ?? null);
     }
   };
-  const hook: CaptureHookV1 = Object.freeze({
-    connect(input: CaptureIdentityV1): CaptureSessionV1 | null {
+  const hook: CaptureHookV2 = Object.freeze({
+    connect(input: CaptureIdentityV2): CaptureSessionV2 | null {
       if (disposed) {
         return null;
       }
@@ -325,9 +325,9 @@ export function installReceiver(options: ReceiverOptions): TestCaptureReceiver {
       live.add(session);
       membershipChanged();
       return Object.freeze({
-        protocolVersion: 1 as const,
+        protocolVersion: 2 as const,
         maxPayloadBytes,
-        begin(input: CaptureRunV1) {
+        begin(input: CaptureRunV2) {
           if (disposed || !live.has(session)) {
             return;
           }
@@ -342,7 +342,7 @@ export function installReceiver(options: ReceiverOptions): TestCaptureReceiver {
           session.run = run;
           state = Object.freeze({ status: 'pending', identity, generation: run.generation });
         },
-        publish(generation: number, build: () => SvgModifierSnapshotV1) {
+        publish(generation: number, build: () => SvgModifierSnapshotV2) {
           if (!current(session, generation)) {
             return;
           }
@@ -377,7 +377,7 @@ export function installReceiver(options: ReceiverOptions): TestCaptureReceiver {
               status: 'terminal-ok',
               identity,
               generation,
-              snapshot: copied.value as unknown as DeepReadonly<SvgModifierSnapshotV1>,
+              snapshot: copied.value as unknown as DeepReadonly<SvgModifierSnapshotV2>,
               payloadBytes: copied.bytes,
             });
           } catch (caught) {
@@ -421,7 +421,7 @@ export function installReceiver(options: ReceiverOptions): TestCaptureReceiver {
       });
     },
   });
-  ownerWindow.__SVG_MODIFIER_CAPTURE_V1__ = hook;
+  ownerWindow.__SVG_MODIFIER_CAPTURE_V2__ = hook;
   return Object.freeze({
     read: () => state,
     dispose() {
@@ -431,8 +431,8 @@ export function installReceiver(options: ReceiverOptions): TestCaptureReceiver {
       }
       live.clear();
       state = idle();
-      if (ownerWindow.__SVG_MODIFIER_CAPTURE_V1__ === hook) {
-        delete ownerWindow.__SVG_MODIFIER_CAPTURE_V1__;
+      if (ownerWindow.__SVG_MODIFIER_CAPTURE_V2__ === hook) {
+        delete ownerWindow.__SVG_MODIFIER_CAPTURE_V2__;
       }
     },
   });
