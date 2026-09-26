@@ -1,6 +1,6 @@
 import { ConfigRules, MetricData, TableMetricData } from 'components/domain/models';
 import { getElementColor, getLabel, getLabelColor } from './helpers';
-import { addLinkToElement, collectSvgUpdateTargets, applySvgUpdateTargets, SvgUpdateTargets } from './updater';
+import { collectSvgUpdateTargets, applySvgUpdateTargets, SvgUpdateTargets, updateLinkForElement } from './updater';
 
 const targetsCache = new WeakMap<SVGElement, SvgUpdateTargets>();
 
@@ -14,20 +14,25 @@ function getOrBuildTargets(svgElement: SVGElement): SvgUpdateTargets {
 }
 
 export function createSvgUpdateOperation(
-  svgElement: SVGElement,
-  attributes: ConfigRules['attributes'],
-  data: MetricData | TableMetricData
+  svgElement: SVGElement | null | undefined,
+  attributes?: ConfigRules['attributes'],
+  data?: MetricData | TableMetricData,
+  paint?: { color: string; filling?: string }
 ) {
   return () => {
+    if (!svgElement) {
+      return;
+    }
+
     const hasLink = attributes ? 'link' in attributes : false;
     const hasLabel = attributes ? 'label' in attributes : false;
     const hasLabelColor = attributes ? 'labelColor' in attributes : false;
 
     const label = getLabel(data, attributes?.label);
-    const labelColor = getLabelColor(attributes?.labelColor, data?.color);
-    const elementColors = getElementColor(data?.color, data?.filling);
+    const labelColor = getLabelColor(attributes?.labelColor, paint?.color ?? data?.color);
+    const elementColors = getElementColor(paint?.color ?? data?.color, paint?.filling ?? data?.filling);
 
-    hasLink && addLinkToElement(svgElement, attributes?.link?.toString());
+    updateLinkForElement(svgElement, hasLink ? attributes?.link?.toString() : undefined);
 
     const targets = getOrBuildTargets(svgElement);
     applySvgUpdateTargets(targets, [hasLabel, label], [hasLabelColor, labelColor], elementColors);

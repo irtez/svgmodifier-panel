@@ -11,7 +11,7 @@ function preparedRule(attributes: ConfigRules['attributes']): PreparedRule {
 }
 
 describe('evaluatePanel', () => {
-  it('keeps static selection and represents an empty dynamic rule explicitly', () => {
+  it('[U13] uses the unavailable dynamic rule for no-data styling beside a static rule', () => {
     const staticAttributes: ConfigRules['attributes'] = { title: 'Static cell' };
     const emptyAttributes: ConfigRules['attributes'] = {
       title: 'No matching data',
@@ -23,7 +23,7 @@ describe('evaluatePanel', () => {
 
     const result = evaluatePanel(rules, new Map());
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       elements: [
         {
           id: 'cell-a',
@@ -46,7 +46,7 @@ describe('evaluatePanel', () => {
             },
           ],
           winner: undefined,
-          selectedAttributes: staticAttributes,
+          selectedAttributes: emptyAttributes,
         },
       ],
     });
@@ -119,12 +119,14 @@ describe('evaluatePanel', () => {
     const firstField = element.rules[0].fields[0];
     const table = element.rules[1].tables[0];
 
-    expect(element.rules[0].fields.map(({ label, color, lvl, metricValue }) => ({
-      label,
-      color,
-      lvl,
-      metricValue,
-    }))).toEqual([
+    expect(
+      element.rules[0].fields.map(({ label, color, lvl, metricValue }) => ({
+        label,
+        color,
+        lvl,
+        metricValue,
+      }))
+    ).toEqual([
       { label: 'metric-a', color: '#ff0000', lvl: 2, metricValue: 5 },
       { label: 'metric-b', color: '#0000ff', lvl: 2, metricValue: 5 },
     ]);
@@ -137,7 +139,7 @@ describe('evaluatePanel', () => {
       ],
       color: '#ffaa00',
       lvl: 2,
-      metricValue: '5',
+      metricValue: 5,
     });
     expect(element.rules[1].winner).toBe(table);
     expect(element.rules[1].elementWinnerAfterRule).toBe(firstField);

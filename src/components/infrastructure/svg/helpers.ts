@@ -19,7 +19,7 @@ export function getLabel(
   }
 
   const legend = metricData.label.toString();
-  const displayValue = metricData.displayValue?.toString() ?? metricData.metricValue.toString();
+  const displayValue = metricData.displayValue?.toString() ?? metricData.metricValue?.toString();
 
   switch (labelSetting) {
     case 'legend':
@@ -27,9 +27,9 @@ export function getLabel(
     case 'replace':
       return displayValue;
     case 'colon':
-      return `${legend}: ${displayValue}`;
+      return displayValue === undefined ? undefined : `${legend}: ${displayValue}`;
     case 'space':
-      return `${legend} ${displayValue}`;
+      return displayValue === undefined ? undefined : `${legend} ${displayValue}`;
     default:
       return labelSetting;
   }

@@ -1,5 +1,8 @@
+import type { Diagnostic, DiagnosticSource } from './diagnosticModels';
+
 export interface ConfigRules {
   id: string | string[];
+  source?: DiagnosticSource;
   attributes: {
     title?: string;
     autoConfig?: boolean;
@@ -34,6 +37,7 @@ export interface Styles {
 
 export interface Tooltip {
   show: boolean;
+  hideNoDataWarnings?: boolean;
   textAbove?: string;
   textBelow?: string;
 }
@@ -48,9 +52,10 @@ export interface Metrics extends GeneralMetricSettings {
   queries?: QueryType[];
 }
 
+// Старые YAML могут содержать оба ключа; нужен хотя бы один способ выбора.
 export type QueryType =
-  | ({ legend: string; refid?: never } & QuerySpecificSettings)
-  | ({ refid: string; legend?: never } & QuerySpecificSettings);
+  | ({ legend: string; refid?: string } & QuerySpecificSettings)
+  | ({ refid: string; legend?: string } & QuerySpecificSettings);
 
 export interface GeneralMetricSettings {
   calculation?: CalculationMethod;
@@ -87,6 +92,8 @@ export interface Threshold {
 
 export interface TooltipContent {
   id: string;
+  noData?: boolean;
+  diagnostics?: Diagnostic[];
   queryData?: Array<{
     label: string;
     metric: string;
@@ -110,6 +117,7 @@ export interface PreparedRule {
   elemIndex: number;
   elemsLength: number;
   attributes: ConfigRules['attributes'];
+  source?: DiagnosticSource;
 }
 
 export type RulesByElementId = Map<string, PreparedRule[]>;
@@ -136,7 +144,7 @@ export interface TableMetricData {
     lvl: number | undefined;
   }>;
   label: string;
-  metricValue: number;
+  metricValue?: number;
   displayValue?: string;
   filling?: string | undefined;
   title?: string | undefined;
@@ -144,6 +152,7 @@ export interface TableMetricData {
   lvl?: number | undefined;
   dsName?: string;
   refId?: string;
+  winningRowIndex?: number;
 }
 
 export interface GridContent {

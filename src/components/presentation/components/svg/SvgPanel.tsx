@@ -11,12 +11,12 @@ interface SvgModePanelProps {
 }
 
 export const SvgModePanel: React.FC<SvgModePanelProps> = ({ height, width }) => {
-  const { processedData, svgDoc, options, timeRange } = usePanelContext();
+  const { processedData, svgDoc, options, timeRange, svgRootRef } = usePanelContext();
 
   const containerRef = useRef<HTMLDivElement>(null);
   const svgContainerRef = useRef<HTMLDivElement>(null);
 
-  const mountedRootRef = useSvgMount(svgContainerRef, svgDoc);
+  const mountedRootRef = useSvgMount(svgContainerRef, svgDoc, svgRootRef);
   useSvgUpdates(processedData, mountedRootRef);
 
   const notificationData = useNotificationData(processedData?.dataSourceMap ?? EMPTY_DS_MAP, options.notifyTooltip);
@@ -29,7 +29,7 @@ export const SvgModePanel: React.FC<SvgModePanelProps> = ({ height, width }) => 
         containerRef={containerRef}
         tooltipContent={processedData?.tooltipContent || []}
         options={options.tooltip}
-        timeRange={timeRange}
+        timeRange={processedData?.timeRange ?? timeRange}
       />
 
       {notificationData.show && (

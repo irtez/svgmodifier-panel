@@ -124,6 +124,11 @@ export const getTextBlockStyles = (): CSSProperties => ({
   marginBottom: '8px',
 });
 
+export const getDiagnosticStyles = (): CSSProperties => ({
+  fontSize: '12px',
+  lineHeight: '1.4',
+});
+
 /* Стили для таблицы */
 export const getTableContainerStyles = (): CSSProperties => ({
   marginTop: '12px',

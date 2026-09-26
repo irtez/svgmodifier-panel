@@ -5,7 +5,7 @@ export const SUGGESTION_TEMPLATES = {
 
   // attributes
   LINK: "link: ''",
-  TOOLTIP: 'tooltip:\n  show: true',
+  TOOLTIP: 'tooltip:\n  show: true\n  hideNoDataWarnings: false',
   LABEL: "label: 'replace'",
   LABEL_COLOR: "labelColor: 'metric'",
   AUTO_CONFIG: 'autoConfig: true',
@@ -36,7 +36,7 @@ export const SUGGESTION_TEMPLATES = {
 
   // defs
   DEF_CONFIG:
-    `- id: ''\n  attributes:\n    tooltip:\n      show: true\n    metrics:\n      queries:\n` +
+    `- id: ''\n  attributes:\n    tooltip:\n      show: true\n      hideNoDataWarnings: false\n    metrics:\n      queries:\n` +
     `        - { refid: '' }\n      baseColor: 'rgba(50, 172,45, 0.97)'\n      thresholds:\n        - { color: 'orange', value: 10 }`,
   THRESHOLDS_ROOT: `thresholds:\n  name: &name\n  - { color: 'orange', value: 10 }\n  - { color: 'red', value: 20 }`,
 } as const;

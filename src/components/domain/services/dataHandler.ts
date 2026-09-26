@@ -1,252 +1,380 @@
 import { matchPattern } from '../utils/common';
-import { defaultConfig, getConfig } from 'components/infrastructure/config/configBuilder';
+import type { QueryTrace, RuleTrace } from 'components/capture/trace';
+import { getConfig } from 'components/infrastructure/config/configBuilder';
+import { resolveFilterDates } from 'components/infrastructure/config/parsers';
 import { formatValues } from '../utils/valueTransformer';
-import { getMappingMatch, calculateValue, getMetricColor, checkFilter } from 'components/domain/utils/calculations';
+import { getMappingMatch, calculateValue, getMetricColor, checkFilter } from '../utils/calculations';
+import { CalculationError, inputFailures, numericValue, reportCalculationError } from '../utils/diagnostics';
 import {
-  QuerySpecificSettings,
-  Metrics,
-  ValueMapping,
-  QueryType,
-  MetricData,
-  TableMetricData,
-  DataFrameMap,
   DataFrameEntry,
-} from 'components/domain/models';
+  DataFrameMap,
+  Diagnostic,
+  EvaluatedCandidate,
+  EvaluationContext,
+  MetricData,
+  Metrics,
+  QueryType,
+  TableMetricData,
+  ValueMapping,
+} from '../models';
 
-export type QueriesArray = {
+/** Запись расчёта сохраняет query и диагностику, но без candidate не занимает место в autoConfig. */
+export interface QuerySlot {
+  counter: number;
+  candidate?: EvaluatedCandidate;
+  diagnostics: Diagnostic[];
+  filling?: string;
+}
+
+export interface QueriesArray {
   fields?: MetricData[];
   tables?: TableMetricData[];
-};
-
-type Fields = Array<{ legend: string; value: number; globalKey?: string }>;
-
-export function getMetricsData(metrics: Metrics[], data: DataFrameMap, mapping?: ValueMapping[]): QueriesArray {
-  const queriesArray: QueriesArray = { fields: [], tables: [] };
-
-  if (!data?.size || !metrics?.length) {
-    return queriesArray;
-  }
-
-  let counter = 1;
-  for (const metric of metrics) {
-    metric.queries?.forEach((query) => {
-      const config = getConfig(query, metric, mapping);
-      getQueriesFromDataFrame(query, queriesArray, data, config, counter++);
-    });
-  }
-
-  return queriesArray;
+  slots?: QuerySlot[];
 }
 
-function getQueriesFromDataFrame(
-  query: QueryType,
-  queriesArray: QueriesArray,
-  dataFrame: DataFrameMap,
-  config: typeof defaultConfig,
-  counter: number
-) {
-  if (query.refid) {
-    const extractedData = dataFrame.get(query.refid);
+type Settings = ReturnType<typeof getConfig>;
+type FieldResult = { legend: string; refId: string; value?: number; diagnostics: Diagnostic[] };
 
-    if (!extractedData) {
-      return;
-    }
+// Источник может вернуть данные вместе с ошибкой: сохраняем и число, и сообщение.
+function availableInputDiagnostics(refId: string, context: EvaluationContext): Diagnostic[] {
+  return inputFailures(refId, context.inputDiagnostics)
+    .filter((diagnostic) => diagnostic.code === 'QUERY_ERROR')
+    .map((diagnostic) => ({ ...diagnostic, elementIds: context.elementIds }));
+}
 
-    if (extractedData.dataSourceName) {
-      query.dataSourceName = extractedData.dataSourceName;
-    }
-
-    if (extractedData.type === 'table') {
-      const table = processTable(extractedData, dataFrame, counter, config, query.refid);
-      if (table) {
-        queriesArray.tables?.push(table);
-      }
-    } else {
-      const fields: Fields = [];
-      for (const [innerKey, values] of extractedData.values) {
-        if (checkFilter(innerKey, config.filter)) {
-          const value = calculateValue(values.values.map(Number), config.calculation);
-          fields.push({ legend: innerKey, value, globalKey: query.refid });
-        }
-      }
-      processFields(fields, queriesArray, config, dataFrame, counter);
-    }
-  }
-
-  if (query.legend) {
-    const fields: Fields = [];
-    for (const [globalKey, metricData] of dataFrame) {
-      for (const [innerKey, values] of metricData.values) {
-        if (matchPattern(query.legend, innerKey) && checkFilter(innerKey, config.filter)) {
-          if (metricData.dataSourceName) {
-            query.dataSourceName = metricData.dataSourceName;
+export function getMetricsData(
+  metrics: Metrics[],
+  data: DataFrameMap,
+  mapping?: ValueMapping[],
+  context: EvaluationContext = { timeTo: Date.now(), diagnostics: [] },
+  capture?: RuleTrace
+): QueriesArray {
+  const result: QueriesArray = { fields: [], tables: [], slots: [] };
+  let counter = 0;
+  for (let metricsIndex = 0; metricsIndex < (metrics?.length ?? 0); metricsIndex++) {
+    const metric = metrics[metricsIndex];
+    for (let queryIndex = 0; queryIndex < (metric.queries?.length ?? 0); queryIndex++) {
+      const query = metric.queries![queryIndex];
+      counter++;
+      const settings = getConfig(query, metric, mapping);
+      // Старый YAML допускает оба способа выбора: sum считается для каждого
+      // отдельно. Номер query общий, поэтому явные selectors не меняются.
+      const selections: QueryType[] =
+        settings.sum && query.refid && query.legend ? [{ refid: query.refid }, { legend: query.legend }] : [query];
+      for (const selection of selections) {
+        const queryCapture = capture?.query(metricsIndex, queryIndex, counter, selection, settings);
+        const ctx: EvaluationContext = {
+          ...context,
+          diagnostics: [],
+          inputDiagnostics: context.inputDiagnostics ?? context.diagnostics,
+          source: { ...context.source, refId: selection.refid, legend: selection.legend },
+        };
+        const start = result.slots!.length;
+        try {
+          if (typeof settings.filling !== 'string') {
+            throw new CalculationError('INVALID_FILLING', 'filling должен быть строкой');
           }
-          const value = calculateValue(values.values.map(Number), config.calculation);
-          fields.push({ legend: innerKey, value, globalKey });
+          settings.filter = resolveFilterDates(settings.filter, context.timeTo);
+          processQuery(selection, settings, data, result, counter, ctx, queryCapture);
+        } catch (error) {
+          reportCalculationError(ctx, error);
+          appendSlot(
+            result,
+            {
+              counter,
+              diagnostics: ctx.diagnostics,
+              filling: typeof settings.filling === 'string' ? settings.filling : 'none',
+            },
+            queryCapture
+          );
+        }
+        for (const slot of result.slots!.slice(start)) {
+          context.diagnostics.push(...slot.diagnostics);
         }
       }
     }
-    processFields(fields, queriesArray, config, dataFrame, counter);
   }
+  return result;
 }
 
-function processFields(
-  fields: Fields,
-  queriesArray: QueriesArray,
-  config: typeof defaultConfig,
-  dataFrame: DataFrameMap,
-  counter: number
-) {
-  if (fields.length === 0) {
-    return;
+function appendSlot(result: QueriesArray, slot: QuerySlot, capture?: QueryTrace): void {
+  result.slots!.push(slot);
+  capture?.record(slot);
+}
+
+function addCandidate(
+  result: QueriesArray,
+  candidate: EvaluatedCandidate,
+  diagnostics: Diagnostic[],
+  capture?: QueryTrace
+): void {
+  if ('columnsData' in candidate) {
+    result.tables!.push(candidate);
+  } else {
+    result.fields!.push(candidate);
   }
+  appendSlot(
+    result,
+    {
+      counter: candidate.counter,
+      candidate,
+      diagnostics,
+      filling: candidate.filling,
+    },
+    capture
+  );
+}
 
-  const addToArray = (value: number, title: string, label: string, refId?: string) => {
-    let displayValue = formatValues(value, config.unit, config.decimal);
-
-    if (config.mapping) {
-      displayValue = getMappingMatch(config.mapping, value, config.decimal) ?? displayValue;
+function processQuery(
+  query: QueryType,
+  settings: Settings,
+  data: DataFrameMap,
+  result: QueriesArray,
+  counter: number,
+  context: EvaluationContext,
+  capture?: QueryTrace
+): void {
+  const fields: FieldResult[] = [];
+  const collectFields = (entry: DataFrameEntry, refId: string, pattern?: string) => {
+    for (const [legend, field] of entry.values) {
+      if ((pattern && !matchPattern(pattern, legend)) || !checkFilter(legend, settings.filter)) {
+        continue;
+      }
+      const fieldContext = {
+        ...context,
+        diagnostics: availableInputDiagnostics(refId, context),
+        source: { ...context.source, refId, legend },
+      };
+      let value: number | undefined;
+      const sourceCapture = capture?.source(refId, legend, field, fieldContext.diagnostics, entry.dataSourceName);
+      try {
+        value = calculateValue(field.values.map(numericValue), settings.calculation, sourceCapture);
+        if (sourceCapture) {
+          sourceCapture.value = value;
+        }
+      } catch (error) {
+        reportCalculationError(fieldContext, error);
+      }
+      fields.push({ legend, refId, value, diagnostics: fieldContext.diagnostics });
     }
-
-    const { color, lvl } = getMetricColor(value, dataFrame, config.thresholds, config.baseColor);
-
-    queriesArray.fields?.push({
-      counter: counter,
-      label,
-      color,
-      lvl,
-      metricValue: value,
-      displayValue,
-      filling: config.filling,
-      title,
-      dsName: config.dataSourceName,
-      refId: refId,
-    });
   };
 
-  if (config.sum) {
-    const value = getSum(fields);
-    const title = getTitle(config.title, 0);
-    const label = getLabel(config.sum, config.label) || '';
-
-    addToArray(value, title, label);
-    return;
+  if (query.refid) {
+    const entry = data.get(query.refid);
+    if (!entry) {
+      throw new CalculationError(
+        'MISSING_INPUT',
+        `Нет данных по запросу ${query.refid}`,
+        undefined,
+        inputFailures(query.refid, context.inputDiagnostics)
+      );
+    }
+    if (entry.type === 'table') {
+      context.diagnostics.push(...availableInputDiagnostics(query.refid, context));
+      capture?.table(entry, query.refid);
+      const table = processTable(entry, data, settings, counter, query.refid, context, capture);
+      addCandidate(result, table, context.diagnostics, capture);
+    } else {
+      collectFields(entry, query.refid);
+    }
+  }
+  if (query.legend) {
+    for (const [refId, entry] of data) {
+      collectFields(entry, refId, query.legend);
+    }
+  }
+  if (!fields.length) {
+    if (query.refid && data.get(query.refid)?.type === 'table') {
+      return;
+    }
+    throw new CalculationError(
+      'EMPTY_INPUT',
+      `Нет подходящих значений для ${query.refid || query.legend || 'запроса'}`
+    );
   }
 
-  fields.forEach((query, index) => {
-    const value = query.value;
-    const title = getTitle(config.title, index);
-    const label = getLabel(query.legend, config.label) || '';
-    const refId = query.globalKey;
+  if (settings.sum) {
+    const failures = fields.flatMap((field) => field.diagnostics);
+    if (fields.some((field) => field.value === undefined)) {
+      // Неполная сумма не выдаётся за полную, остальные запросы продолжают работать.
+      appendSlot(result, { counter, diagnostics: failures, filling: settings.filling }, capture);
+      return;
+    }
+    const total = fields.reduce((sum, field) => sum + field.value!, 0);
+    if (!Number.isFinite(total)) {
+      throw new CalculationError('NON_FINITE_VALUE', 'Сумма не вернула конечное число');
+    }
+    addField({ legend: settings.sum, refId: '', value: total, diagnostics: failures }, 0);
+    return;
+  }
+  fields.forEach(addField);
 
-    addToArray(value, title, label, refId);
-  });
+  function addField(field: FieldResult, index: number): void {
+    capture?.scalar(settings.sum ? null : index);
+    if (field.value === undefined) {
+      appendSlot(result, { counter, diagnostics: field.diagnostics, filling: settings.filling }, capture);
+      return;
+    }
+    const ctx = {
+      ...context,
+      diagnostics: field.diagnostics,
+      source: { ...context.source, refId: field.refId || undefined, legend: field.legend },
+    };
+    const { color, lvl } = getMetricColor(
+      field.value,
+      data,
+      settings.thresholds,
+      settings.baseColor,
+      ctx,
+      capture?.current?.color
+    );
+    let displayValue = formatValues(field.value, settings.unit, settings.decimal);
+    if (settings.mapping) {
+      displayValue = getMappingMatch(settings.mapping, field.value, settings.decimal) ?? displayValue;
+    }
+    addCandidate(
+      result,
+      {
+        counter,
+        label: getLabel(field.legend, settings.label),
+        color,
+        lvl,
+        metricValue: field.value,
+        displayValue,
+        filling: settings.filling,
+        title: index === 0 ? settings.title || '' : '',
+        dsName: settings.dataSourceName ?? data.get(field.refId)?.dataSourceName,
+        refId: field.refId || undefined,
+      },
+      field.diagnostics,
+      capture
+    );
+  }
 }
 
 function processTable(
-  extractedData: DataFrameEntry,
-  dataFrame: DataFrameMap,
+  entry: DataFrameEntry,
+  data: DataFrameMap,
+  settings: Settings,
   counter: number,
-  config: typeof defaultConfig,
-  refId?: string
-) {
-  const headers = Array.from(extractedData.values.keys());
-  const colCount = headers.length;
-  const rowCount = extractedData.length;
-
-  if (!rowCount || !colCount) {
-    return;
+  refId: string,
+  context: EvaluationContext,
+  capture?: QueryTrace
+): TableMetricData {
+  const headers = [...entry.values.keys()];
+  const columns = [...entry.values.values()].map((field) => field.values);
+  const rowCount = entry.length ?? columns[0]?.length ?? 0;
+  if (!headers.length || !rowCount) {
+    throw new CalculationError('EMPTY_INPUT', 'Таблица не содержит строк');
   }
-
-  const columns = Array.from(extractedData.values.values()).map((col) => col.values);
-
-  const table: TableMetricData = {
-    counter: counter,
-    headers: headers,
-    columnsData: [],
-    filling: config.filling,
-    title: config.title,
-    label: '',
-    metricValue: 0,
-    dsName: config.dataSourceName,
-    refId: refId,
-  };
-
-  let maxLvl = -1;
-  let thKeyIndex: number | undefined;
-
-  if (config.thresholdKey) {
-    const key = config.thresholdKey;
-    thKeyIndex = headers.findIndex((item: string) => item.startsWith(key));
-  }
-
-  for (let rowIndex = 0; rowIndex < rowCount; rowIndex++) {
-    const row = columns.map((col) => col[rowIndex]);
-
-    if (config.filter) {
-      const passes = headers.every((header, i) => checkFilter(String(row[i]), config.filter, header));
-      if (!passes) {
-        continue;
-      }
+  let thresholdIndex: number | undefined;
+  if (settings.thresholdKey) {
+    const exact = headers.indexOf(settings.thresholdKey);
+    const matches = headers.flatMap((header, index) => (header.startsWith(settings.thresholdKey!) ? [index] : []));
+    if (exact >= 0) {
+      thresholdIndex = exact;
+    } else if (matches.length === 1) {
+      thresholdIndex = matches[0];
+    } else {
+      throw new CalculationError(
+        matches.length ? 'AMBIGUOUS_FIELD' : 'MISSING_FIELD',
+        matches.length
+          ? `Несколько колонок подходят под ${settings.thresholdKey}`
+          : `Колонка ${settings.thresholdKey} не найдена`
+      );
     }
-
+  }
+  const table: TableMetricData = {
+    counter,
+    headers,
+    columnsData: [],
+    filling: settings.filling,
+    title: settings.title,
+    label: thresholdIndex === undefined ? '' : headers[thresholdIndex],
+    dsName: settings.dataSourceName ?? entry.dataSourceName,
+    refId,
+  };
+  if (capture?.current?.table) {
+    capture.current.table.thresholdColumnIndex = thresholdIndex ?? null;
+    capture.current.table.rowFilterStatus = 'incomplete';
+  }
+  let winner: { value: number; displayValue: string; color?: string; lvl: number; rowIndex: number } | undefined;
+  for (let i = 0; i < rowCount; i++) {
+    const rawRow = columns.map((column) => column[i]);
+    // Сохраняем прежний текст таблицы; числовая проверка читает исходный пропуск.
+    const row = rawRow.map(String);
+    if (!headers.every((header, column) => checkFilter(String(row[column]), settings.filter, header))) {
+      if (capture?.current?.table) {
+        capture.current.table.nextRow = i + 1;
+      }
+      continue;
+    }
+    const capturedRow = capture?.row(entry, i, row);
     let color: string | undefined;
-    let lvl: number | undefined = -1;
-
-    if (thKeyIndex !== undefined && thKeyIndex !== -1) {
-      const rawValue = row[thKeyIndex];
-      const numericValue = Number(rawValue);
-      let displayValue = formatValues(numericValue, config.unit, config.decimal);
-
-      if (!isNaN(numericValue)) {
-        const result = getMetricColor(numericValue, dataFrame, config.thresholds, config.baseColor);
-        lvl = result.lvl;
-        color = result.color;
-
-        if (lvl > maxLvl) {
-          maxLvl = lvl;
+    let lvl: number | undefined;
+    if (thresholdIndex !== undefined) {
+      const value = numericValue(rawRow[thresholdIndex]);
+      if (value === null || !Number.isFinite(value)) {
+        reportCalculationError(
+          context,
+          new CalculationError(
+            value === null ? 'MISSING_VALUE' : 'NON_FINITE_VALUE',
+            value === null
+              ? `Строка ${i + 1}: нет значения ${headers[thresholdIndex]}`
+              : `Строка ${i + 1}: значение ${headers[thresholdIndex]} не является конечным числом`
+          )
+        );
+      } else {
+        ({ color, lvl } = getMetricColor(
+          value,
+          data,
+          settings.thresholds,
+          settings.baseColor,
+          context,
+          capturedRow?.color
+        ));
+        const displayValue =
+          (settings.mapping && getMappingMatch(settings.mapping, value, settings.decimal)) ??
+          formatValues(value, settings.unit, settings.decimal);
+        row[thresholdIndex] = displayValue;
+        if (capturedRow) {
+          capturedRow.decision = { value, displayValue, color, level: lvl };
+        }
+        if (!winner || lvl > winner.lvl) {
+          winner = { value, color, lvl, displayValue, rowIndex: table.columnsData.length };
         }
       }
-
-      if (config.mapping) {
-        displayValue = getMappingMatch(config.mapping, numericValue, config.decimal) ?? displayValue;
-      }
-
-      if (displayValue) {
-        row[thKeyIndex] = displayValue;
-      }
     }
-
     table.columnsData.push({ row, color, lvl });
   }
-
-  if (table.columnsData.length === 0) {
-    return;
+  if (capture?.current?.table) {
+    capture.current.table.rowFilterStatus = 'applied';
   }
-  table.lvl = maxLvl !== -1 ? maxLvl : 0;
-  table.color = table.columnsData[table.columnsData.length - 1].color;
-
-  if (thKeyIndex !== undefined && thKeyIndex !== -1) {
-    table.label = headers[thKeyIndex];
-    table.metricValue = table.columnsData[table.columnsData.length - 1].row[thKeyIndex];
+  if (!table.columnsData.length) {
+    throw new CalculationError('EMPTY_INPUT', 'После фильтрации в таблице нет строк');
   }
-
+  if (thresholdIndex !== undefined && !winner) {
+    // Ошибки строк уже объясняют причину; общий результат таблицы отсутствует.
+    throw new CalculationError(
+      'EMPTY_INPUT',
+      'В выбранной колонке нет пригодных значений',
+      undefined,
+      context.diagnostics.slice()
+    );
+  }
+  if (winner) {
+    table.metricValue = winner.value;
+    table.displayValue = winner.displayValue;
+    table.color = winner.color;
+    table.lvl = winner.lvl;
+    table.winningRowIndex = winner.rowIndex;
+  } else {
+    // Таблица без thresholdKey предназначена для чтения, не для выбора цвета.
+    table.lvl = 0;
+  }
   return table;
 }
 
 function getLabel(displayName: string, label?: string): string {
-  if (!label) {
-    label = displayName;
-  }
-
-  label = label.replace(/_prfx\d+/g, '').replace(/\{\{legend\}\}/g, displayName);
-  return label;
-}
-
-function getTitle(query: QuerySpecificSettings['title'], counter: number): string {
-  return query && counter === 0 ? query : '';
-}
-
-function getSum(data: Fields): number {
-  return data.reduce((acc, item) => acc + item.value, 0);
+  return (label || displayName).replace(/_prfx\d+/g, '').replace(/\{\{legend\}\}/g, displayName);
 }

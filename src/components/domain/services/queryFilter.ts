@@ -7,6 +7,28 @@ export function queriesFilter(
   elemsLength: number,
   autoConfig?: boolean
 ): QueriesArray {
+  if (queries.slots) {
+    let slots = queries.slots;
+    if (selector?.length) {
+      slots = slots.filter((slot) => selector.includes(slot.counter));
+    } else if (autoConfig) {
+      // Сохраняем прежнюю раскладку: fields и tables индексируются отдельно.
+      // Раскладываем только доступные результаты; ошибки не занимают индикатор.
+      slots = slots.filter((slot) => slot.candidate);
+      const take = (items: typeof slots) =>
+        index === elemsLength - 1 ? items.slice(index) : items.slice(index, index + 1);
+      const selected = new Set([
+        ...take(slots.filter((slot) => slot.candidate && !('columnsData' in slot.candidate))),
+        ...take(slots.filter((slot) => slot.candidate && 'columnsData' in slot.candidate)),
+      ]);
+      slots = slots.filter((slot) => selected.has(slot));
+    }
+    return {
+      slots,
+      fields: slots.flatMap((slot) => (slot.candidate && !('columnsData' in slot.candidate) ? [slot.candidate] : [])),
+      tables: slots.flatMap((slot) => (slot.candidate && 'columnsData' in slot.candidate ? [slot.candidate] : [])),
+    };
+  }
   const fieldsLength = queries.fields?.length || 0;
   const tablesLength = queries.tables?.length || 0;
   const metricsLength = fieldsLength + tablesLength;

@@ -5,7 +5,7 @@ import { TimeRange } from '@grafana/data';
 
 import { PanelOptions } from 'types';
 import { TooltipContent } from 'components/domain/models';
-import { getTooltipContainerStyles, getContentClass } from './styles';
+import { getTooltipContainerStyles, getContentClass, getDiagnosticStyles } from './styles';
 import { useTooltipLogic } from './hooks';
 import { TimeSection } from './sections/timeSection';
 import { TextSection } from './sections/textSection';
@@ -36,8 +36,9 @@ const TooltipContentComponent: React.FC<{
   const tableMetrics = validCheck(content.queryTableData);
   const textAbove = validCheck(content.textAbove);
   const textBelow = validCheck(content.textBelow);
+  const diagnostics = validCheck(content.diagnostics);
 
-  if (!Boolean(metrics || tableMetrics || textAbove || textBelow)) {
+  if (!Boolean(metrics || tableMetrics || textAbove || textBelow || diagnostics || content.noData)) {
     return null;
   }
 
@@ -52,6 +53,19 @@ const TooltipContentComponent: React.FC<{
         {textAbove && <TextSection currentText={textAbove as string[]} />}
         {metrics && <MetricsSection queryData={metrics} options={options} />}
         {tableMetrics && <TableSection tables={tableMetrics} />}
+        {content.noData && (
+          <div style={{ ...getDiagnosticStyles(), marginBottom: '8px' }}>Нет данных для определения состояния</div>
+        )}
+        {diagnostics && (
+          <ul style={{ ...getDiagnosticStyles(), margin: '6px 0', paddingLeft: '20px' }}>
+            {diagnostics.map((diagnostic, index) => (
+              <li key={index}>
+                {diagnostic.source?.legend ? `${diagnostic.source.legend}: ` : ''}
+                {diagnostic.message}
+              </li>
+            ))}
+          </ul>
+        )}
         {textBelow && <TextSection currentText={textBelow as string[]} />}
       </div>
     </div>
