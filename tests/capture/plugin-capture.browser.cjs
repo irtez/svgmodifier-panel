@@ -25,6 +25,11 @@ const fixtureYaml =
   'changes:\n  - id: a\n    attributes:\n      label: replace\n      tooltip: {show: true}\n' +
   '      metrics:\n        queries: [{refid: A}]\n        baseColor: green\n' +
   '        thresholds: [{value: 80, color: red, lvl: 2}]';
+const tableRowSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 100">
+  <g data-cell-id="row"><rect x="0" y="0" width="400" height="70" fill="none" stroke="none"/><text x="10" y="40">Service Alpha</text></g>
+  <g id="cell-a"><rect x="180" y="10" width="70" height="50" fill="green"/><text x="190" y="40">0</text></g>
+  <g id="cell-b"><rect x="280" y="10" width="70" height="50" fill="green"/><text x="290" y="40">0</text></g>
+</svg>`;
 
 function options(kind) {
   const warnings = kind.startsWith('warnings-');
@@ -52,7 +57,7 @@ function options(kind) {
     grid: { columnMode: 'auto' },
     table: { rows: 1, columns: 1 },
     jsonData: {
-      svgCode: kind === 'svg' ? '<svg>' : fixtureSvg,
+      svgCode: kind === 'svg' ? '<svg>' : kind === 'table-row' ? tableRowSvg : fixtureSvg,
       metricsMapping: [
         {
           page: 'Synthetic',
@@ -62,6 +67,8 @@ function options(kind) {
             ? 'changes: ['
             : kind === 'missing'
             ? fixtureYaml.replace('refid: A', 'refid: MISSING')
+            : kind === 'table-row'
+            ? fixtureYaml.replace('id: a', 'id: [a, b]')
             : fixtureYaml,
         },
       ],
@@ -491,6 +498,34 @@ async function main() {
         assert.equal(await page.locator('#cell-a').count(), 0);
       }
     );
+    await scenario(
+      'B16',
+      'label replacement preserves table row ownership',
+      { kind: 'table-row' },
+      async ({ page }) => {
+        await visibleValue(page);
+        const value = await snapshot(page);
+        assert.equal(value.indicators.length, 2);
+        for (const indicator of value.indicators) {
+          assert.equal(indicator.binding.status, 'inferred');
+          assert.equal(indicator.binding.basis, 'row_alignment');
+          assert.deepEqual(
+            indicator.objectIds.map((id) => value.objects.find((o) => o.id === id).name?.text),
+            ['Service Alpha']
+          );
+          assert.equal(value.metrics.find((m) => m.id === indicator.state.winnerMetricId).scalar.value, 95);
+          assert.deepEqual(indicator.state.color.rgba, [255, 0, 0, 1]);
+          assert.ok(indicator.appearance.some((p) => JSON.stringify(p.fill?.rgba) === '[255,0,0,1]'));
+          assert.equal(await page.locator('#' + indicator.id + ' text').textContent(), '95');
+          assert.equal(
+            await page.locator('#' + indicator.id + ' rect').evaluate((n) => getComputedStyle(n).fill),
+            'rgb(255, 0, 0)'
+          );
+        }
+        assert.ok(value.objects.every((o) => !['0', '95'].includes(o.name?.text)));
+      }
+    );
+
     for (const [id, kind] of [
       ['B05', 'yaml'],
       ['B06', 'svg'],

@@ -145,7 +145,11 @@ export class MapMeasurements {
       )
       .map((node) => ({ node, box: this.box(node.getBoundingClientRect()) }));
   }
-  texts(nodes: Element[], targets: ReadonlySet<Element>): TextRow[] {
+  texts(
+    nodes: Element[],
+    targets: ReadonlySet<Element>,
+    isTableCaption: (text: TextRow) => boolean = () => false
+  ): TextRow[] {
     type Fragment = TextRow & { owner: Element | null; block: Element };
     const fragments: Fragment[] = [];
     let chars = 0;
@@ -205,13 +209,27 @@ export class MapMeasurements {
     const rows: Fragment[] = [];
     for (const f of fragments) {
       const last = rows[rows.length - 1];
+      // A nested HTML block can continue one caption on the next line. Separate
+      // sibling blocks (or different target owners) must remain separate names.
+      const continuation =
+        last &&
+        last.flow.localName === 'foreignObject' &&
+        last.nodes[last.nodes.length - 1] !== f.node &&
+        last.nodes[last.nodes.length - 1].contains(f.node) &&
+        Math.abs(last.box.x - f.box.x) < 1 &&
+        f.box.y >= last.box.y + last.box.height * 0.5 &&
+        f.box.y <= last.box.y + last.box.height + f.box.height * 0.5 &&
+        isTableCaption({ ...last, box: union([last.box, f.box])! });
       if (
         last &&
         last.flow === f.flow &&
         last.owner === f.owner &&
-        last.block === f.block &&
-        Math.abs(last.box.y - f.box.y) < Math.min(last.box.height, f.box.height) * 0.35
+        (continuation ||
+          (last.block === f.block && Math.abs(last.box.y - f.box.y) < Math.min(last.box.height, f.box.height) * 0.35))
       ) {
+        if (continuation && !/[\s-]$/.test(last.text) && !/^\s/.test(f.text)) {
+          last.text += ' ';
+        }
         last.text += f.text;
         last.box = union([last.box, f.box])!;
         last.nodes.push(...f.nodes);

@@ -76,7 +76,7 @@ async function main() {
       document.getElementById('host').innerHTML = svg;
       document.getElementById('other').innerHTML = svg.replace('Own name', 'Other panel');
       MapTest.updateLinkForElement(document.querySelector('#host #cell-linked'), '/d/override/view');
-      window.collect = () => {
+      window.collect = (dynamicIds = ['cell-dynamic']) => {
         const root = document.querySelector('#host svg');
         const targets = new Map([...root.querySelectorAll('[id^="cell-"]')].map((n) => [n.id, n]));
         const indicators = [...targets.keys()].map((id) => ({
@@ -92,7 +92,7 @@ async function main() {
         const objects = MapTest.collectMapObjects({
           root,
           targets,
-          dynamicText: new Set([targets.get('cell-dynamic')]),
+          dynamicText: new Set(dynamicIds.map((id) => targets.get(id)).filter(Boolean)),
           indicators,
           navigation: (url, use = 'applied') => [{ linkId: url, use }],
         });
@@ -217,6 +217,140 @@ async function main() {
       assert.equal(objects[0].parentId, objects[1].parentId);
       assert.equal(data.objects.find((o) => o.id === objects[0].parentId).name.text, 'Row name');
       assert.deepEqual(names('cell-not-drawn'), []);
+    });
+    // Independent row labels and literal coordinates: calculated values must not
+    // become object names or erase the visual relationship to their row.
+    const table = `<svg xmlns="http://www.w3.org/2000/svg" width="600" height="220" viewBox="0 0 600 220">
+      <g data-cell-id="row-a"><rect x="0" y="10" width="500" height="60" fill="none" stroke="none"/><text x="10" y="45">Queue</text></g>
+      <g data-cell-id="row-b"><rect x="0" y="90" width="500" height="60" fill="none" stroke="none"/><text x="10" y="125">Worker</text></g>
+      <g id="cell-a1"><rect x="220" y="20" width="80" height="40" fill="green"/><text x="240" y="45">17</text></g>
+      <g id="cell-a2"><rect x="330" y="20" width="80" height="40" fill="red"/><text x="350" y="45">23</text></g>
+      <g id="cell-b1"><rect x="220" y="100" width="80" height="40" fill="gray"/><text x="240" y="125">0</text></g>
+      <g id="cell-b2"><rect x="330" y="100" width="80" height="40" fill="gray"/><text x="350" y="125">0</text></g>
+    </svg>`;
+    const dynamicIds = ['cell-a1', 'cell-a2', 'cell-b1', 'cell-b2'];
+    const resetTable = () => page.evaluate((svg) => (document.querySelector('#host').innerHTML = svg), table);
+    const readTable = async () => (data = await page.evaluate((ids) => collect(ids), dynamicIds));
+    await resetTable();
+    await readTable();
+    await check('V38 dynamic table cells retain their row label, never their numeric text', () => {
+      assert.deepEqual(names('cell-a1'), ['Queue']);
+      assert.deepEqual(names('cell-a2'), ['Queue']);
+      assert.deepEqual(names('cell-b1'), ['Worker']);
+      assert.deepEqual(names('cell-b2'), ['Worker']);
+      assert.equal(indicator('cell-a1').binding.status, 'inferred');
+      assert.equal(indicator('cell-a1').binding.basis, 'row_alignment');
+      assert.ok(data.objects.every((o) => !['17', '23', '0'].includes(o.name?.text)));
+      assert.equal(data.mutated, false);
+      assert.deepEqual(indicator('cell-a2').appearance[0].fill.rgba, [255, 0, 0, 1]);
+    });
+    await check('V39 empty or changed values and resize do not break table ownership', async () => {
+      await page.evaluate(() => {
+        document.querySelector('#host #cell-a1 text').textContent = '';
+        document.querySelector('#host #cell-a2 text').textContent = '999';
+        document.querySelector('#host svg').style.width = '300px';
+      });
+      await readTable();
+      assert.deepEqual(names('cell-a1'), ['Queue']);
+      assert.deepEqual(names('cell-a2'), ['Queue']);
+      assert.deepEqual(names('cell-b1'), ['Worker']);
+      assert.equal(data.mutated, false);
+    });
+    await check('V40 a hidden second cell or overlapping rectangles do not prove a table row', async () => {
+      for (const variant of ['hidden', 'overlap', 'unpainted', 'clipped', 'zero-width', 'zero-height']) {
+        await resetTable();
+        await page.evaluate((variant) => {
+          const cell = document.querySelector('#host #cell-a2');
+          if (variant === 'hidden') cell.style.display = 'none';
+          if (variant === 'overlap') cell.querySelector('rect').setAttribute('x', '220');
+          if (variant === 'unpainted') cell.querySelector('rect').setAttribute('fill', 'none');
+          if (variant === 'clipped') cell.style.clipPath = 'inset(0)';
+          if (variant === 'zero-width') cell.querySelector('rect').setAttribute('width', '0');
+          if (variant === 'zero-height') cell.querySelector('rect').setAttribute('height', '0');
+        }, variant);
+        await readTable();
+        assert.deepEqual(names('cell-a1'), [], variant);
+        assert.equal(indicator('cell-a1').binding.status, 'unresolved', variant);
+      }
+    });
+    await check('V41 competing table row labels remain ambiguous', async () => {
+      await resetTable();
+      await page.evaluate(() => {
+        const other = document.querySelector('#host [data-cell-id="row-a"]').cloneNode(true);
+        other.setAttribute('data-cell-id', 'row-alternative');
+        other.querySelector('text').textContent = 'Alternative';
+        document.querySelector('#host svg').append(other);
+      });
+      await readTable();
+      assert.deepEqual(names('cell-a1'), []);
+      assert.equal(indicator('cell-a1').binding.status, 'ambiguous');
+      const candidates = indicator('cell-a1').binding.candidateObjectIds.map(
+        (id) => data.objects.find((o) => o.id === id).name.text
+      );
+      assert.deepEqual(candidates.sort(), ['Alternative', 'Queue']);
+    });
+    await check('V42 a multiline HTML row caption stays one name, sibling labels stay separate', async () => {
+      await resetTable();
+      await page.evaluate(() => {
+        document.querySelector('#host [data-cell-id="row-b"] text').remove();
+        document
+          .querySelector('#host [data-cell-id="row-b"]')
+          .insertAdjacentHTML(
+            'beforeend',
+            '<foreignObject x="10" y="95" width="150" height="50"><div xmlns="http://www.w3.org/1999/xhtml" style="font:16px Arial">Batch-<div>worker</div></div></foreignObject>'
+          );
+      });
+      await readTable();
+      assert.deepEqual(names('cell-b1'), ['Batch-worker']);
+      assert.deepEqual(names('cell-b2'), ['Batch-worker']);
+      await page.evaluate(() => {
+        document.querySelector('#host foreignObject').innerHTML =
+          '<div xmlns="http://www.w3.org/1999/xhtml" style="font:16px Arial"><div>First</div><div>Second</div></div>';
+      });
+      await readTable();
+      assert.deepEqual(names('cell-b1'), []);
+      assert.ok(data.objects.some((o) => o.name?.text === 'First'));
+      assert.ok(data.objects.some((o) => o.name?.text === 'Second'));
+      await page.evaluate(() => {
+        document.querySelector('#host foreignObject').innerHTML =
+          '<div xmlns="http://www.w3.org/1999/xhtml" style="font:16px Arial">Batch-<div>worker</div><div>Other service</div></div>';
+      });
+      await readTable();
+      assert.ok(data.objects.some((o) => o.name?.text === 'Batch-worker'));
+      assert.ok(data.objects.some((o) => o.name?.text === 'Other service'));
+      assert.deepEqual(names('cell-b1'), []);
+      await page.evaluate(() => {
+        document.querySelector('#host foreignObject').innerHTML =
+          '<div xmlns="http://www.w3.org/1999/xhtml" style="font:16px Arial">Scheduled<div>worker</div></div>';
+      });
+      await readTable();
+      assert.deepEqual(names('cell-b1'), ['Scheduled worker']);
+    });
+    await check('V43 nested HTML service labels outside a table remain separate', async () => {
+      await page.evaluate(() => {
+        document.querySelector('#host').innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="500" height="160">
+          <g data-cell-id="services"><rect width="400" height="80" fill="gray"/>
+            <foreignObject x="10" y="10" width="180" height="60"><div xmlns="http://www.w3.org/1999/xhtml" style="font:16px/20px Arial">Gateway<div>Worker</div></div></foreignObject></g>
+          <circle id="cell-a1" cx="350" cy="20" r="4" fill="green"/>
+          <circle id="cell-a2" cx="350" cy="40" r="4" fill="red"/>
+        </svg>`;
+      });
+      await readTable();
+      assert.deepEqual(names('cell-a1'), ['Gateway']);
+      assert.deepEqual(names('cell-a2'), ['Worker']);
+    });
+    await check('V44 table evidence in a shared data-cell does not merge labels outside its bounds', async () => {
+      await page.evaluate(() => {
+        document
+          .querySelector('#host [data-cell-id="services"]')
+          .insertAdjacentHTML(
+            'beforeend',
+            '<rect x="0" y="90" width="400" height="70" fill="none" stroke="none"/><rect x="220" y="100" width="50" height="40" fill="green"/><rect x="300" y="100" width="50" height="40" fill="green"/>'
+          );
+      });
+      await readTable();
+      assert.deepEqual(names('cell-a1'), ['Gateway']);
+      assert.deepEqual(names('cell-a2'), ['Worker']);
     });
     for (const result of results) process.stdout.write(JSON.stringify(result) + '\n');
     assert.equal(results.filter((r) => !r.ok).length, 0);
